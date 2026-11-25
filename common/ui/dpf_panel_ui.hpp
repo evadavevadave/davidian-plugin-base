@@ -79,11 +79,17 @@ protected:
 
     dui::Panel& panel() { return fPanel; }
 
+    /* Value conversion between the host parameter and the panel, for controls whose
+     * panel meaning differs: e.g. a bypass parameter (1 = bypassed) shown on a footswitch
+     * whose LED means engaged. Default: unchanged. */
+    virtual float toPanel(uint32_t /* index */, float value) const { return value; }
+    virtual float toHost(uint32_t /* index */, float value) const { return value; }
+
     void parameterChanged(uint32_t index, float value) override
     {
         if (!fReady)
             return;
-        dui::panel_set(&fPanel, (int)index, value);
+        dui::panel_set(&fPanel, (int)index, toPanel(index, value));
         repaintIfDirty();
     }
 
@@ -200,7 +206,8 @@ private:
 
     static void writeCallback(void* host, int param, float value)
     {
-        static_cast<DavidianPanelUI*>(host)->setParameterValue((uint32_t)param, value);
+        DavidianPanelUI* const self = static_cast<DavidianPanelUI*>(host);
+        self->setParameterValue((uint32_t)param, self->toHost((uint32_t)param, value));
     }
 
     void beginEdit(int widget)

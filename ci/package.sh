@@ -6,7 +6,7 @@
 # and platform, as Brownstone's release zips:
 #   build/dist/davidian-<name>-<version>-<platform>.zip
 #     LV2/<name>.lv2  VST3/<name>.vst3  CLAP/<name>.clap  AU/<name>.component (macOS)
-#     Standalone/<name>[.exe]  README.md  LICENSE  LICENSE-DPF
+#     Standalone/<name>[.exe]  README.md  LICENSE  LICENSE-DPF  (+ PACKAGE_FILES)
 #   ci/package.sh <version> <platform>      e.g. ci/package.sh v1.0.0 macos-universal
 # Run from the repository root (the base itself, or a plugin repository using it as base/).
 set -euo pipefail
@@ -17,7 +17,7 @@ bin="build/bin"
 base="$(cd "$(dirname "$0")/.." && pwd)"  # this script's repository: the base
 mkdir -p build/dist
 
-while IFS=$'\t' read -r name uri au_type au_sub au_manu; do
+while IFS=$'\t' read -r name uri au_type au_sub au_manu extra; do
   [ -z "$name" ] && continue
   pkg="davidian-${name}-${version}-${platform}"
   out="build/dist/$pkg"
@@ -48,6 +48,11 @@ while IFS=$'\t' read -r name uri au_type au_sub au_manu; do
   cp LICENSE "$out/"
   # In a plugin repository the DPF licence comes with the base submodule.
   if [ -f LICENSE-DPF ]; then cp LICENSE-DPF "$out/"; else cp "$base/LICENSE-DPF" "$out/"; fi
+  # PACKAGE_FILES from davidian_add_plugin()
+  if [ -n "${extra:-}" ]; then
+    IFS='|' read -r -a files <<< "$extra"
+    for f in "${files[@]}"; do cp "$f" "$out/"; done
+  fi
 
   (
     cd build/dist

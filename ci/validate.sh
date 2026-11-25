@@ -47,7 +47,7 @@ run() { # label, command...
 pv_flags=(--strictness-level 5 --validate-in-process)
 if [ "$gui" != "--gui" ]; then pv_flags+=(--skip-gui-tests); fi
 
-while IFS=$'\t' read -r name uri au_type au_sub au_manu; do
+while IFS=$'\t' read -r name uri au_type au_sub au_manu extra; do
   [ -z "$name" ] && continue
 
   if [ "$gui" = "--gui" ]; then

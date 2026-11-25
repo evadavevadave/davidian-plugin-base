@@ -4,8 +4,10 @@
 # Completes the LV2 metadata DPF generates, after each build:
 #   SYMBOLS  replaces DPF's audio port symbols ("lv2_audio_in_1", ...) with the symbols a
 #            plugin was released with, in port order (inputs, then outputs)
+#   RENAME   renames other symbols, e.g. DPF's fixed "lv2_enabled" and "lv2_latency"
 #   EMAIL    adds the maintainer's e-mail (foaf:mbox), which DPF has no field for
-#   cmake -DTTL=<bundle>/<name>_dsp.ttl [-DSYMBOLS=in,out] [-DEMAIL=a@b.c] -P lv2_metadata.cmake
+#   cmake -DTTL=<bundle>/<name>_dsp.ttl [-DSYMBOLS=in,out] [-DRENAME=lv2_enabled=enabled,...]
+#         [-DEMAIL=a@b.c] -P lv2_metadata.cmake
 
 if(NOT EXISTS "${TTL}")
   message(FATAL_ERROR "lv2_metadata: ${TTL} not found")
@@ -48,6 +50,27 @@ if(SYMBOLS)
     string(REGEX REPLACE "lv2:symbol \"lv2_[A-Za-z0-9_]+\"" "lv2:symbol \"${sym}\"" new "${port}")
     string(REPLACE "${port}" "${new}" ttl "${ttl}")
     math(EXPR i "${i} + 1")
+  endforeach()
+endif()
+
+# ---- other symbols
+if(RENAME)
+  string(REPLACE "," ";" pairs "${RENAME}")
+  foreach(pair IN LISTS pairs)
+    if(NOT pair MATCHES "^([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z_][A-Za-z0-9_]*)$")
+      message(FATAL_ERROR "lv2_metadata: '${pair}' is not old=new")
+    endif()
+    set(from "${CMAKE_MATCH_1}")
+    set(to "${CMAKE_MATCH_2}")
+    string(FIND "${ttl}" "lv2:symbol \"${from}\"" at)
+    if(at EQUAL -1)
+      message(FATAL_ERROR "lv2_metadata: no port with symbol '${from}' in ${TTL}")
+    endif()
+    string(FIND "${ttl}" "lv2:symbol \"${to}\"" taken)
+    if(NOT taken EQUAL -1)
+      message(FATAL_ERROR "lv2_metadata: symbol '${to}' is already used in ${TTL}")
+    endif()
+    string(REPLACE "lv2:symbol \"${from}\"" "lv2:symbol \"${to}\"" ttl "${ttl}")
   endforeach()
 endif()
 

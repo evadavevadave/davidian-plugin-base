@@ -8,6 +8,10 @@
 #                                 inputs then outputs (see below)
 #   [HARNESS_ARGS <args...>]      extra options for this plugin's harness test, e.g.
 #                                 --max-thd-db -120 or --allow-step channel
+#   [LV2_RENAME <old=new...>]     rename other generated LV2 symbols, e.g. DPF's
+#                                 lv2_enabled=enabled or lv2_latency=latency
+#   [PACKAGE_FILES <files...>]    extra files for this plugin's release zips
+#   [WINDOWS_RC <file.rc>]        Windows version resource for every Windows binary
 #   [TARGETS <formats...>])       default: lv2 vst3 clap jack au
 #
 # One dpf_add_plugin() call builds every format from the same code:
@@ -53,7 +57,7 @@ include_guard(GLOBAL)
 set(DAVIDIAN_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
 function(davidian_add_plugin NAME)
-  cmake_parse_arguments(ARG "" "" "FILES_DSP;FILES_UI;LV2_AUDIO_SYMBOLS;TARGETS;HARNESS_ARGS" ${ARGN})
+  cmake_parse_arguments(ARG "" "WINDOWS_RC" "FILES_DSP;FILES_UI;LV2_AUDIO_SYMBOLS;TARGETS;HARNESS_ARGS;LV2_RENAME;PACKAGE_FILES" ${ARGN})
   if(NOT ARG_FILES_DSP)
     message(FATAL_ERROR "davidian_add_plugin(${NAME}): FILES_DSP is required")
   endif()
@@ -82,7 +86,8 @@ function(davidian_add_plugin NAME)
   set(bin "${PROJECT_BINARY_DIR}/bin")
 
   # Identity, for the host tests and for build/plugins.tsv, which the CI validation and
-  # packaging scripts (ci/) read: name, LV2 URI, AU type, AU subtype, AU manufacturer.
+  # packaging scripts (ci/) read: name, LV2 URI, AU type, AU subtype, AU manufacturer,
+  # extra package files ("|"-separated).
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/DistrhoPluginInfo.h" info)
   set(uri "")
   set(brand "")
@@ -101,7 +106,13 @@ function(davidian_add_plugin NAME)
   if(info MATCHES "#define[ \t]+DISTRHO_PLUGIN_IS_SYNTH[ \t]+1")
     set(au_type aumu)
   endif()
-  file(APPEND "${CMAKE_BINARY_DIR}/plugins.tsv" "${NAME}\t${uri}\t${au_type}\t${unique}\t${brand}\n")
+  set(extra "")
+  foreach(f IN LISTS ARG_PACKAGE_FILES)
+    get_filename_component(f "${f}" ABSOLUTE)
+    list(APPEND extra "${f}")
+  endforeach()
+  string(REPLACE ";" "|" extra "${extra}")
+  file(APPEND "${CMAKE_BINARY_DIR}/plugins.tsv" "${NAME}\t${uri}\t${au_type}\t${unique}\t${brand}\t${extra}\n")
 
   # LV2 metadata DPF can't express: released audio port symbols and the maintainer's
   # e-mail (DAVIDIAN_PLUGIN_EMAIL in DistrhoPluginInfo.h). Runs after DPF's own
@@ -110,12 +121,23 @@ function(davidian_add_plugin NAME)
   if(info MATCHES "#define[ \t]+DAVIDIAN_PLUGIN_EMAIL[ \t]+\"([^\"]+)\"")
     set(email "${CMAKE_MATCH_1}")
   endif()
-  if("lv2" IN_LIST ARG_TARGETS AND (ARG_LV2_AUDIO_SYMBOLS OR email))
+  if("lv2" IN_LIST ARG_TARGETS AND (ARG_LV2_AUDIO_SYMBOLS OR ARG_LV2_RENAME OR email))
     string(REPLACE ";" "," syms "${ARG_LV2_AUDIO_SYMBOLS}")
+    string(REPLACE ";" "," renames "${ARG_LV2_RENAME}")
     add_custom_command(TARGET ${NAME}-lv2 POST_BUILD
       COMMAND "${CMAKE_COMMAND}" -DTTL=${bin}/${NAME}.lv2/${NAME}_dsp.ttl "-DSYMBOLS=${syms}"
-              "-DEMAIL=${email}" -P "${DAVIDIAN_CMAKE_DIR}/lv2_metadata.cmake"
+              "-DRENAME=${renames}" "-DEMAIL=${email}" -P "${DAVIDIAN_CMAKE_DIR}/lv2_metadata.cmake"
       VERBATIM)
+  endif()
+
+  # Windows file details (Explorer > Properties > Details) for every Windows binary.
+  if(WIN32 AND ARG_WINDOWS_RC)
+    enable_language(RC)
+    foreach(t ${NAME}-lv2 ${NAME}-lv2-ui ${NAME}-vst3 ${NAME}-clap ${NAME}-jack)
+      if(TARGET ${t})
+        target_sources(${t} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/${ARG_WINDOWS_RC}")
+      endif()
+    endforeach()
   endif()
 
   if(DAVIDIAN_BUILD_TESTS)
