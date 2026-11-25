@@ -1,0 +1,32 @@
+DPF: state parameters cut at a read boundary (CLAP stateLoad, VST3 setState)
+
+A string that ends exactly at the end of a stream read was taken as complete when the
+stale byte after the read happened to be zero, splitting keys and values across reads.
+Upstream: not fixed in DPF develop as of 2026-11 (see patches/README.md).
+
+--- a/distrho/src/DistrhoPluginCLAP.cpp	2026-11-25 21:02:30.851234622 +1100
++++ b/distrho/src/DistrhoPluginCLAP.cpp	2026-11-25 21:02:30.872234775 +1100
+@@ -1612,7 +1612,9 @@
+                 buffer[read] = orig;
+ 
+                 // if buffer offset points to null, we found the end of a string, lets check
+-                if (buffer[i] == '\0')
++                // (only within the bytes just read: past them is stale data from an earlier read,
++                //  and a string that runs to the end of this read continues in the next one)
++                if (i < read && buffer[i] == '\0')
+                 {
+                     // special keys
+                     if (key == "__dpf_state_begin__")
+--- a/distrho/src/DistrhoPluginVST3.cpp	2026-11-25 21:02:30.853234637 +1100
++++ b/distrho/src/DistrhoPluginVST3.cpp	2026-11-25 21:02:30.873234782 +1100
+@@ -1002,7 +1002,9 @@
+                 buffer[read] = orig;
+ 
+                 // if buffer offset points to null, we found the end of a string, lets check
+-                if (buffer[i] == '\0')
++                // (only within the bytes just read: past them is stale data from an earlier read,
++                //  and a string that runs to the end of this read continues in the next one)
++                if (i < read && buffer[i] == '\0')
+                 {
+                     // special keys
+                     if (key == "__dpf_state_begin__")

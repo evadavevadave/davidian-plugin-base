@@ -56,7 +56,51 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dpf/CMakeLists.txt")
 endif()
 set(DPF_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(DPF_LIBRARIES OFF CACHE BOOL "" FORCE)
-add_subdirectory(dpf)
+
+# Fixes for DPF bugs not yet fixed upstream live in patches/*.patch (see patches/README.md).
+# They are applied to a copy of DPF in the build tree, so the dpf/ submodule stays pinned
+# and unmodified. The copy is redone whenever the DPF commit or a patch changes.
+option(DAVIDIAN_DPF_PATCHES "Build from a copy of DPF with patches/*.patch applied" ON)
+file(GLOB dpf_patches CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/patches/*.patch")
+list(SORT dpf_patches)
+set(DAVIDIAN_DPF_DIR "${CMAKE_CURRENT_SOURCE_DIR}/dpf")
+if(DAVIDIAN_DPF_PATCHES AND dpf_patches)
+  find_package(Git REQUIRED)
+  set(DAVIDIAN_DPF_DIR "${CMAKE_BINARY_DIR}/dpf-patched")
+  execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}/dpf" rev-parse HEAD
+    OUTPUT_VARIABLE dpf_commit OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  set(stamp "dpf ${dpf_commit}\n")
+  foreach(p IN LISTS dpf_patches)
+    file(SHA256 "${p}" h)
+    get_filename_component(n "${p}" NAME)
+    string(APPEND stamp "${n} ${h}\n")
+  endforeach()
+  set(stamp_file "${DAVIDIAN_DPF_DIR}.stamp")
+  set(old_stamp "")
+  if(EXISTS "${stamp_file}")
+    file(READ "${stamp_file}" old_stamp)
+  endif()
+  if(NOT old_stamp STREQUAL stamp OR NOT EXISTS "${DAVIDIAN_DPF_DIR}/CMakeLists.txt")
+    message(STATUS "Patching a copy of DPF ${dpf_commit}")
+    file(REMOVE_RECURSE "${DAVIDIAN_DPF_DIR}" "${stamp_file}")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/dpf/" DESTINATION "${DAVIDIAN_DPF_DIR}" PATTERN ".git" EXCLUDE)
+    foreach(p IN LISTS dpf_patches)
+      # The ceiling keeps git from treating an enclosing repository as the patch target.
+      execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env "GIT_CEILING_DIRECTORIES=${CMAKE_BINARY_DIR}"
+                "${GIT_EXECUTABLE}" apply --whitespace=nowarn "${p}"
+        WORKING_DIRECTORY "${DAVIDIAN_DPF_DIR}"
+        RESULT_VARIABLE rc ERROR_VARIABLE err)
+      if(NOT rc EQUAL 0)
+        message(FATAL_ERROR "Patch ${p} does not apply to DPF ${dpf_commit}:\n${err}\n"
+                            "If DPF was bumped and now includes the fix, delete the patch.")
+      endif()
+      message(STATUS "  applied ${p}")
+    endforeach()
+    file(WRITE "${stamp_file}" "${stamp}")
+  endif()
+endif()
+add_subdirectory("${DAVIDIAN_DPF_DIR}" dpf)
 
 # ------------------------------------------------------- shared code
 

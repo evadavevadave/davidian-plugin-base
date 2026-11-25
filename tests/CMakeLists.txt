@@ -25,3 +25,8 @@ if(LILV_FOUND)
     target_link_libraries(lv2_host PRIVATE m)
   endif()
 endif()
+
+# Host for the per-plugin state restore tests (CLAP and VST3, loaded like a DAW does).
+add_executable(plugin_state plugin_state.cpp)
+target_include_directories(plugin_state PRIVATE "${DAVIDIAN_DPF_DIR}/distrho/src")
+target_link_libraries(plugin_state PRIVATE ${CMAKE_DL_LIBS})

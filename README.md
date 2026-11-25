@@ -13,6 +13,7 @@ style and tests follow Davidian Brownstone 100, whose DSP and panel code this re
 ```
 davidian-plugin-base/
   dpf/                 DPF, git submodule pinned at 4238e1c7 (same as Brownstone 100)
+  patches/             fixes for DPF bugs not yet fixed upstream, applied to a copy at configure time
   common/              shared DSP: header-only C99, also valid C++, no format or GUI headers
     davidian_dsp.h       includes everything below
     dsp_util.h           constants, clamping, dB, pot tapers
@@ -113,17 +114,21 @@ pluginval's GUI tests run as a separate, non-blocking step, as in Brownstone. Ea
 `davidian-<name>-<version>-<platform>.zip`, holds `LV2/`, `VST3/`, `CLAP/`, `AU/` (macOS),
 `Standalone/`, the README and the licences.
 
-### Known upstream warnings
+### DPF patches and known upstream warnings
 
-These appear in passing CI runs. They come from DPF (pinned at 4238e1c7), not from plugin
-code, and are left as they are rather than carrying a private patch to DPF:
+Real DPF bugs that affect the plugins are fixed by patches in `patches/`, each with a test
+that fails without it and an upstream report; see `patches/README.md`. CMake applies them
+to a copy of DPF in the build tree (`-DDAVIDIAN_DPF_PATCHES=OFF` uses the plain submodule).
+
+These warnings appear in passing CI runs. They come from DPF, not from plugin code, and
+are only noise, so they are left as they are:
 
 | Where | Message | Why |
 | --- | --- | --- |
 | clap-validator | `state-invalid-random`: "The plugin loaded random bytes successfully, which is unexpected, but the plugin did not crash" | DPF's CLAP state loader skips data it doesn't recognise and still reports success; nothing is applied, so the plugin's state is unchanged. Not changed in DPF `develop` as of 2026-11. |
 | pluginval (VST3) | `DPF warning: asked to delete component while audio processor / connection point still active` | the host releases the VST3 component before the objects it handed out; DPF defers the cleanup to unload. pluginval passes. |
 
-Recheck both when bumping DPF.
+Recheck both, and every patch, when bumping DPF.
 
 ## Plugins: one build, every format
 
@@ -166,6 +171,8 @@ Hosts find a plugin and its controls by identity, so a ported plugin keeps its r
 ### Tests per plugin
 
 `harness_<name>` (see above), `formats_<name>` (every format built), `compat_<name>` (released identity unchanged),
+`state_clap_<name>` / `state_vst3_<name>` (the built plugin restores the same parameters whether a
+host passes saved state in one read or in small pieces),
 `static_runtime_<name>` (Windows), and with lilv installed `lv2_<name>_44100` /
 `lv2_<name>_192000` (the bundle loads in an LV2 host and produces clean audio).
 `davidian_add_lv2_test()` adds runs with chosen control values, as the example does to

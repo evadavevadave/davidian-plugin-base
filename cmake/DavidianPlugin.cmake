@@ -38,6 +38,8 @@
 #                      DC, clicks on parameter changes, sample-rate changes, CPU, THD and
 #                      aliasing at 44.1-192 kHz and block sizes 1-4096; writes
 #                      harness_<name>.md in the build folder
+#   state_<clap|vst3>_<name>  the built plugin restores the same parameters whether the
+#                      host passes saved state in one read or in small pieces
 #   static_runtime_<name>  Windows: no binary needs the MinGW or MSVC runtime DLLs
 #   lv2_<name>_<rate>  if lilv is installed: the LV2 bundle loads in a host, instantiates
 #                      with default controls at 44.1 and 192 kHz and produces finite,
@@ -133,6 +135,12 @@ function(davidian_add_plugin NAME)
         davidian_add_lv2_test(${NAME} lv2_${NAME}_${rate} --rate ${rate})
       endforeach()
     endif()
+    # State restore must not depend on how the host splits the saved state into reads.
+    foreach(fmt clap vst3)
+      if(fmt IN_LIST ARG_TARGETS)
+        add_test(NAME state_${fmt}_${NAME} COMMAND plugin_state ${fmt} $<TARGET_FILE:${NAME}-${fmt}>)
+      endif()
+    endforeach()
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/compat.txt")
       add_test(NAME compat_${NAME}
         COMMAND "${CMAKE_COMMAND}" -DCOMPAT=${CMAKE_CURRENT_SOURCE_DIR}/compat.txt
