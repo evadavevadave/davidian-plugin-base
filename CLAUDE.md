@@ -25,6 +25,10 @@
   never per sample. Per-sample functions (*_run, *_step, os_up/os_down) are real-time safe.
 - Code moved from a plugin into common/ must not change its sound: prove it with a bit-exact
   render comparison before and after, and report any difference.
+- The harness (harness_<name>) must pass for every plugin. Use HARNESS_ARGS --allow-step only
+  for a control that is meant to switch instantly, and say why in the plugin's CMakeLists.txt.
+- Audio-thread code must pass the RealtimeSanitizer build (-DDAVIDIAN_RTSAN=ON, Clang 20+):
+  no allocation, locks or system calls in run() or setParameterValue().
 - No -ffast-math (it removes NaN guards). Keep the DPF submodule pinned; bump it deliberately.
 - Every source file starts with the SPDX GPL-3.0-or-later header and "Copyright (C) 2026 Davidian".
 - Build and test: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j &&

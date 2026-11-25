@@ -1,21 +1,32 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Davidian
-# Builds every plugin in every format (LV2, VST3, CLAP, standalone; AU on macOS) and runs
-# the tests on Windows, macOS (universal) and Linux x64 / arm64, following Brownstone
-# 100's workflow. The tests include, per plugin: all formats built, released IDs and LV2
-# ports unchanged (compat.txt), the LV2 bundle running in a host (Linux), and on Windows
-# no dependency on runtime DLLs. Plugin validators (pluginval, auval, lv2lint,
-# clap-validator), sanitizers and release packaging are step 3 of docs/ENVIRONMENT.md.
+# CI and quality checks, based on Brownstone 100's workflow.
+#
+#   windows, macos (universal), linux x64 + arm64
+#       build every plugin in every format (LV2, VST3, CLAP, standalone; AU on macOS)
+#       ctest: unit tests, panel, harness (NaN, denormals, DC, clicks, rate changes, CPU,
+#              THD, aliasing at 44.1-192 kHz and block sizes 1-4096), formats built,
+#              released identity unchanged, LV2 host runs (Linux), static runtime (Windows)
+#       validators: pluginval (VST3, AU), clap-validator (CLAP), auval (AU), lv2lint (LV2)
+#       package each plugin per platform and upload as artifacts
+#   sanitizers   ASan + UBSan build of everything; all tests
+#   rtsan        Clang RealtimeSanitizer: the harness aborts if processing or a parameter
+#                change allocates, locks or makes a system call
+#   release      on a v* tag: a GitHub release with every zip
 name: build
 
 on:
   push:
     branches: ['**']
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  GITHUB_TOKEN: ${{ github.token }}  # for release-asset lookups in ci/fetch_tools.sh
 
 jobs:
   windows:
@@ -24,6 +35,9 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+      - name: Version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       # DPF's OpenGL code builds with MinGW-w64 on Windows, not with Visual Studio.
       - uses: msys2/setup-msys2@v2
         with:
@@ -39,20 +53,31 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DDAVIDIAN_WERROR=ON
           cmake --build build --parallel
+          find build/bin -maxdepth 4 | sort
       - name: Test
         shell: msys2 {0}
-        run: |
-          find build/bin -maxdepth 4 | sort
-          ctest --test-dir build --output-on-failure
-      - uses: actions/upload-artifact@v5
-        with:
-          name: plugins-windows-x64
-          path: build/bin/
-      - uses: actions/upload-artifact@v5
+        run: ctest --test-dir build --output-on-failure
+      - name: Harness report
         if: always()
+        shell: bash
+        run: cat build/harness_*.md >> "$GITHUB_STEP_SUMMARY" || true
+      - name: Fetch validators
+        shell: bash
+        run: bash ci/fetch_tools.sh windows
+      - name: Validate (pluginval, clap-validator)
+        shell: bash
+        run: bash ci/validate.sh windows
+      - name: Open the GUIs (pluginval GUI tests)
+        shell: bash
+        continue-on-error: true
+        run: bash ci/validate.sh windows --gui
+      - name: Package
+        shell: bash
+        run: bash ci/package.sh "$VERSION" windows-x64
+      - uses: actions/upload-artifact@v5
         with:
-          name: panel-windows
-          path: build/panel.bmp
+          name: dist-windows-x64
+          path: build/dist/*.zip
 
   macos:
     runs-on: macos-latest
@@ -60,24 +85,44 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+      - name: Version
+        run: echo "VERSION=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
       - name: Build (universal arm64 + x86_64)
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDAVIDIAN_WERROR=ON
           cmake --build build --parallel
+          find build/bin -maxdepth 4 | sort
       - name: Check architectures
         run: |
-          find build/bin -maxdepth 4 | sort
           for f in build/bin/*.vst3/Contents/MacOS/* build/bin/*.clap/Contents/MacOS/* \
                    build/bin/*.component/Contents/MacOS/* build/bin/*.lv2/*.dylib; do
             lipo -info "$f"
             lipo "$f" -verify_arch arm64 x86_64
           done
+      - name: Ad-hoc sign
+        run: |
+          for b in build/bin/*.vst3 build/bin/*.clap build/bin/*.component; do
+            codesign --force --deep --sign - "$b"
+          done
+          codesign --force --sign - build/bin/*.lv2/*.dylib
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Harness report
+        if: always()
+        run: cat build/harness_*.md >> "$GITHUB_STEP_SUMMARY" || true
+      - name: Fetch validators
+        run: bash ci/fetch_tools.sh macos
+      - name: Validate (auval, pluginval, clap-validator)
+        run: bash ci/validate.sh macos
+      - name: Open the GUIs (pluginval GUI tests)
+        continue-on-error: true
+        run: bash ci/validate.sh macos --gui
+      - name: Package
+        run: bash ci/package.sh "$VERSION" macos-universal
       - uses: actions/upload-artifact@v5
         with:
-          name: plugins-macos-universal
-          path: build/bin/
+          name: dist-macos-universal
+          path: build/dist/*.zip
 
   linux:
     strategy:
@@ -86,6 +131,68 @@ jobs:
         # 22.04 keeps the glibc requirement low (2.35) so the binaries run on older distros.
         runner: [ubuntu-22.04, ubuntu-22.04-arm]
     runs-on: ${{ matrix.runner }}
+    env:
+      PLATFORM: ${{ matrix.runner == 'ubuntu-22.04-arm' && 'linux-arm64' || 'linux-x64' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Version
+        run: echo "VERSION=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+      - name: Install build and test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libgl1-mesa-dev libdbus-1-dev \
+            libjack-jackd2-dev libasound2-dev libpulse-dev lv2-dev liblilv-dev \
+            meson ninja-build xvfb xauth zip unzip
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDAVIDIAN_WERROR=ON
+          cmake --build build --parallel
+          find build/bin -maxdepth 4 | sort
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Harness report
+        if: always()
+        run: cat build/harness_*.md >> "$GITHUB_STEP_SUMMARY" || true
+      # lv2lint has no binary releases and its upstream moved; build the sfztools mirror
+      # at the 0.16.2 release.
+      - name: Build lv2lint
+        run: |
+          git clone --depth 1 --branch 0.16.2 https://github.com/sfztools/lv2lint.git build/lv2lint-src
+          meson setup build/lv2lint-src/build build/lv2lint-src
+          ninja -C build/lv2lint-src/build
+          sudo install -m 755 build/lv2lint-src/build/lv2lint /usr/local/bin/lv2lint
+      - name: Validate (lv2lint; pluginval and clap-validator on x64)
+        run: |
+          if [ "$PLATFORM" = linux-x64 ]; then
+            bash ci/fetch_tools.sh linux
+            xvfb-run -a bash ci/validate.sh linux
+          else
+            # pluginval and clap-validator publish x64 Linux builds only: LV2 checks here.
+            while IFS=$'\t' read -r name uri rest; do
+              lv2lint -M nopack -I "$PWD/build/bin/$name.lv2/" "$uri"
+            done < build/plugins.tsv
+          fi
+      - name: Open the GUIs (pluginval GUI tests, x64)
+        if: matrix.runner == 'ubuntu-22.04'
+        continue-on-error: true
+        run: xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX" bash ci/validate.sh linux --gui
+      - name: Package
+        run: bash ci/package.sh "$VERSION" "$PLATFORM"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: dist-${{ env.PLATFORM }}
+          path: build/dist/*.zip
+      - uses: actions/upload-artifact@v5
+        if: matrix.runner == 'ubuntu-22.04'
+        with:
+          name: panel-linux
+          path: build/panel.bmp
+
+  sanitizers:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with:
@@ -96,18 +203,57 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libgl1-mesa-dev libdbus-1-dev \
             libjack-jackd2-dev libasound2-dev libpulse-dev lv2-dev liblilv-dev
-      - name: Build
+      - name: Build with AddressSanitizer and UndefinedBehaviorSanitizer (GCC)
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDAVIDIAN_WERROR=ON
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDAVIDIAN_SANITIZE=address,undefined
           cmake --build build --parallel
-      - name: Test
+      - name: Test under ASan + UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build --output-on-failure
-      - uses: actions/upload-artifact@v5
+
+  rtsan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
         with:
-          name: plugins-${{ matrix.runner == 'ubuntu-22.04-arm' && 'linux-arm64' || 'linux-x64' }}
-          path: build/bin/
-      - uses: actions/upload-artifact@v5
-        if: matrix.runner == 'ubuntu-22.04'
+          submodules: recursive
+      - name: Install Clang 20 and build tools
+        run: |
+          wget -qO llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh 20
+          sudo apt-get install -y --no-install-recommends libclang-rt-20-dev cmake pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libgl1-mesa-dev libdbus-1-dev \
+            lv2-dev liblilv-dev
+      - name: Build the harness with RealtimeSanitizer
+        env:
+          CC: clang-20
+          CXX: clang++-20
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDAVIDIAN_RTSAN=ON -DDAVIDIAN_WERROR=ON
+          cmake --build build --parallel
+      - name: Harness under RealtimeSanitizer
+        env:
+          RTSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build --output-on-failure -R '^harness_'
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos, linux, sanitizers, rtsan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
         with:
-          name: panel-linux
-          path: build/panel.bmp
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --title "Davidian $GITHUB_REF_NAME" --generate-notes

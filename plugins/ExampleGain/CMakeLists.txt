@@ -8,7 +8,9 @@
 davidian_add_plugin(examplegain
   FILES_DSP ExampleGainPlugin.cpp
   FILES_UI  ExampleGainUI.cpp
-  LV2_AUDIO_SYMBOLS in_l in_r out_l out_r)
+  LV2_AUDIO_SYMBOLS in_l in_r out_l out_r
+  # A clean gain: any distortion or aliasing above float rounding is a bug.
+  HARNESS_ARGS --max-thd-db -120 --max-alias-db -120)
 
 # The gain really is applied, in every LV2 host: -6.0206 dB is x0.5, 0 dB is unity and the
 # bottom of the range is silence.

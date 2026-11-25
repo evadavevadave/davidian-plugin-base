@@ -6,6 +6,8 @@
 #   [FILES_UI <files...>]         UI sources; omit for a plugin without a GUI
 #   [LV2_AUDIO_SYMBOLS <sym...>]  LV2 audio port symbols of an already-released plugin,
 #                                 inputs then outputs (see below)
+#   [HARNESS_ARGS <args...>]      extra options for this plugin's harness test, e.g.
+#                                 --max-thd-db -120 or --allow-step channel
 #   [TARGETS <formats...>])       default: lv2 vst3 clap jack au
 #
 # One dpf_add_plugin() call builds every format from the same code:
@@ -31,6 +33,10 @@
 #   formats_<name>     every format for this platform was built
 #   compat_<name>      if the folder holds compat.txt: URIs, IDs and LV2 ports still match
 #                      the released ones (cmake/check_compat.cmake)
+#   harness_<name>     the measurement harness (tests/harness/): NaN, denormals, ceiling,
+#                      DC, clicks on parameter changes, sample-rate changes, CPU, THD and
+#                      aliasing at 44.1-192 kHz and block sizes 1-4096; writes
+#                      harness_<name>.md in the build folder
 #   static_runtime_<name>  Windows: no binary needs the MinGW or MSVC runtime DLLs
 #   lv2_<name>_<rate>  if lilv is installed: the LV2 bundle loads in a host, instantiates
 #                      with default controls at 44.1 and 192 kHz and produces finite,
@@ -44,7 +50,7 @@ include_guard(GLOBAL)
 set(DAVIDIAN_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
 function(davidian_add_plugin NAME)
-  cmake_parse_arguments(ARG "" "" "FILES_DSP;FILES_UI;LV2_AUDIO_SYMBOLS;TARGETS" ${ARGN})
+  cmake_parse_arguments(ARG "" "" "FILES_DSP;FILES_UI;LV2_AUDIO_SYMBOLS;TARGETS;HARNESS_ARGS" ${ARGN})
   if(NOT ARG_FILES_DSP)
     message(FATAL_ERROR "davidian_add_plugin(${NAME}): FILES_DSP is required")
   endif()
@@ -72,11 +78,27 @@ function(davidian_add_plugin NAME)
 
   set(bin "${PROJECT_BINARY_DIR}/bin")
 
-  # The LV2 URI, for the host tests.
+  # Identity, for the host tests and for build/plugins.tsv, which the CI validation and
+  # packaging scripts (ci/) read: name, LV2 URI, AU type, AU subtype, AU manufacturer.
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/DistrhoPluginInfo.h" info)
+  set(uri "")
+  set(brand "")
+  set(unique "")
   if(info MATCHES "#define[ \t]+DISTRHO_PLUGIN_URI[ \t]+\"([^\"]+)\"")
-    set_property(GLOBAL PROPERTY DAVIDIAN_${NAME}_URI "${CMAKE_MATCH_1}")
+    set(uri "${CMAKE_MATCH_1}")
+    set_property(GLOBAL PROPERTY DAVIDIAN_${NAME}_URI "${uri}")
   endif()
+  if(info MATCHES "#define[ \t]+DISTRHO_PLUGIN_BRAND_ID[ \t]+([A-Za-z0-9]+)")
+    set(brand "${CMAKE_MATCH_1}")
+  endif()
+  if(info MATCHES "#define[ \t]+DISTRHO_PLUGIN_UNIQUE_ID[ \t]+([A-Za-z0-9]+)")
+    set(unique "${CMAKE_MATCH_1}")
+  endif()
+  set(au_type aufx)
+  if(info MATCHES "#define[ \t]+DISTRHO_PLUGIN_IS_SYNTH[ \t]+1")
+    set(au_type aumu)
+  endif()
+  file(APPEND "${PROJECT_BINARY_DIR}/plugins.tsv" "${NAME}\t${uri}\t${au_type}\t${unique}\t${brand}\n")
 
   if("lv2" IN_LIST ARG_TARGETS AND ARG_LV2_AUDIO_SYMBOLS)
     # Runs after DPF's own POST_BUILD step that generates the .ttl files.
@@ -88,6 +110,7 @@ function(davidian_add_plugin NAME)
   endif()
 
   if(DAVIDIAN_BUILD_TESTS)
+    davidian__add_harness(${NAME} ${ARG_HARNESS_ARGS})
     string(REPLACE ";" "," targets "${ARG_TARGETS}")
     add_test(NAME formats_${NAME}
       COMMAND "${CMAKE_COMMAND}" -DBIN=${bin} -DNAME=${NAME} -DTARGETS=${targets}
@@ -120,4 +143,31 @@ function(davidian_add_lv2_test NAME TEST)
   endif()
   add_test(NAME ${TEST}
     COMMAND lv2_host "${PROJECT_BINARY_DIR}/bin/${NAME}.lv2" "${uri}" ${ARGN})
+endfunction()
+
+# The harness: format-independent test code (built once) plus a DPF adapter compiled
+# with each plugin's DistrhoPluginInfo.h and linked with its DSP library.
+set(DAVIDIAN_HARNESS_DIR "${CMAKE_CURRENT_LIST_DIR}/../tests/harness")
+
+function(davidian__add_harness NAME)
+  if(NOT TARGET davidian_harness)
+    add_library(davidian_harness OBJECT "${DAVIDIAN_HARNESS_DIR}/harness.cpp")
+    target_link_libraries(davidian_harness PRIVATE davidian::dsp davidian_warnings)
+    if(DAVIDIAN_RTSAN)
+      target_compile_options(davidian_harness PRIVATE -fsanitize=realtime)
+    endif()
+  endif()
+  add_executable(harness_${NAME} "${DAVIDIAN_HARNESS_DIR}/dut_dpf.cpp" $<TARGET_OBJECTS:davidian_harness>)
+  target_include_directories(harness_${NAME} PRIVATE "${DAVIDIAN_HARNESS_DIR}")
+  target_link_libraries(harness_${NAME} PRIVATE ${NAME}-dsp davidian::dsp)
+  if(DAVIDIAN_RTSAN)
+    target_link_options(harness_${NAME} PRIVATE -fsanitize=realtime)
+  endif()
+  set(extra "")
+  if(DAVIDIAN_SANITIZE OR DAVIDIAN_RTSAN)
+    # Sanitizers slow processing down, so the CPU budget is reported, not enforced.
+    list(APPEND extra --min-realtime 0)
+  endif()
+  add_test(NAME harness_${NAME}
+    COMMAND harness_${NAME} ${ARGN} ${extra} --report "${PROJECT_BINARY_DIR}/harness_${NAME}.md")
 endfunction()

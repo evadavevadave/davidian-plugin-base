@@ -36,9 +36,11 @@ davidian-plugin-base/
   plugins/
     ExampleGain/         example stereo gain: copy this folder to start a plugin
   tests/               unit tests, panel render, C++ compile test, header rule, LV2 host
+    harness/             measurement harness: runs any plugin's DSP with no DAW
+  ci/                  fetch_tools.sh, validate.sh, package.sh (used by CI, runnable locally)
   docs/ENVIRONMENT.md  the Universal Plugin Environment design
   CLAUDE.md            rules for Claude Code
-  .github/workflows/   CI: Windows, macOS (universal), Linux x64 and arm64
+  .github/workflows/   CI: builds, tests, validators, sanitizers, release zips
 ```
 
 ## Building
@@ -62,6 +64,54 @@ ctest --test-dir build --output-on-failure
 | `cxx` | every shared header compiles and runs as C++ |
 | `dsp_headers_format_free` | no file in `common/` includes a plugin-format, GUI or OS header, and DSP never includes `common/ui/` |
 | per plugin | see "Tests per plugin" below |
+
+## Measurement harness
+
+`harness_<name>` (run by ctest, report in `build/harness_<name>.md`) drives the plugin through
+DPF's own `PluginExporter`, the object every format wrapper uses, at 44.1, 48, 88.2, 96,
+176.4 and 192 kHz and block sizes 1, 7, 64, 512, 4096 and random. It fails on:
+
+| Check | How |
+| --- | --- |
+| NaN / infinity, ceiling, denormals | silence, sine, full-scale noise, impulses, square wave, silence tail; every output sample |
+| FP mode | the plugin must leave the host thread's flush-to-zero mode as it found it |
+| DC offset | silence and a 1 kHz sine; above -60 dBFS fails |
+| clicks | every parameter jumps default -> max -> min -> default on a sine; content above 4 kHz right after a change must not exceed the settled sound by 6 dB and -50 dBFS |
+| sample-rate change | after `sampleRateChanged()` the output must match a fresh instance, with every parameter moving |
+| CPU | slower than 1.5x real time at any rate (block 512) |
+| THD, aliasing | measured with coherent tones (1 kHz at -12 dBFS; 6 kHz at -6 dBFS, non-harmonic energy to 20 kHz); fail only with `--max-thd-db` / `--max-alias-db` |
+
+Per-plugin options go in `HARNESS_ARGS` (e.g. `--allow-step channel` for a switch that is
+meant to change instantly). Each check was verified against a deliberately broken copy of
+the example plugin.
+
+### Sanitizer builds
+
+```
+cmake -S . -B build-asan -DDAVIDIAN_SANITIZE=address,undefined      # GCC or Clang; all tests
+CC=clang CXX=clang++ cmake -S . -B build-rtsan -DDAVIDIAN_RTSAN=ON  # Clang 20+; ctest -R harness_
+```
+
+With `DAVIDIAN_RTSAN` every block and parameter change the harness sends runs inside a
+`[[clang::nonblocking]]` function, so RealtimeSanitizer aborts on any allocation, lock or
+system call the plugin makes on the audio thread, with a stack trace.
+
+## Continuous integration
+
+`.github/workflows/build.yml`, on every push:
+
+| Job | Does |
+| --- | --- |
+| windows | MinGW build, ctest, pluginval (VST3), clap-validator, zips |
+| macos | universal build, architecture check, ad-hoc signing, ctest, auval, pluginval (VST3, AU), clap-validator, zips |
+| linux x64 / arm64 | build on Ubuntu 22.04, ctest (incl. LV2 host runs), lv2lint, pluginval and clap-validator (x64), zips |
+| sanitizers | ASan + UBSan build; all tests |
+| rtsan | Clang 20 RealtimeSanitizer build; the harness |
+| release | on a `v*` tag: a GitHub release with every zip |
+
+pluginval's GUI tests run as a separate, non-blocking step, as in Brownstone. Each zip,
+`davidian-<name>-<version>-<platform>.zip`, holds `LV2/`, `VST3/`, `CLAP/`, `AU/` (macOS),
+`Standalone/`, the README and the licences.
 
 ## Plugins: one build, every format
 
@@ -103,7 +153,7 @@ Hosts find a plugin and its controls by identity, so a ported plugin keeps its r
 
 ### Tests per plugin
 
-`formats_<name>` (every format built), `compat_<name>` (released identity unchanged),
+`harness_<name>` (see above), `formats_<name>` (every format built), `compat_<name>` (released identity unchanged),
 `static_runtime_<name>` (Windows), and with lilv installed `lv2_<name>_44100` /
 `lv2_<name>_192000` (the bundle loads in an LV2 host and produces clean audio).
 `davidian_add_lv2_test()` adds runs with chosen control values, as the example does to

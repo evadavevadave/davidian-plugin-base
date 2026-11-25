@@ -36,6 +36,18 @@ endif()
 
 option(DAVIDIAN_BUILD_TESTS "Build the tests in tests/" ON)
 option(DAVIDIAN_WERROR "Treat warnings in our own code as errors" OFF)
+# Sanitizer builds (see .github/workflows/build.yml):
+#   -DDAVIDIAN_SANITIZE=address,undefined   everything, including DPF and the plugins (GCC
+#                                           or Clang); the tests then run under ASan/UBSan
+#   -DDAVIDIAN_RTSAN=ON                     Clang 20+: the harness checks, with
+#                                           RealtimeSanitizer, that processing and parameter
+#                                           changes never allocate, lock or make system calls
+set(DAVIDIAN_SANITIZE "" CACHE STRING "Sanitizers for every target, e.g. address,undefined")
+option(DAVIDIAN_RTSAN "Build the harness with RealtimeSanitizer (Clang 20+)" OFF)
+if(DAVIDIAN_SANITIZE)
+  add_compile_options(-fsanitize=${DAVIDIAN_SANITIZE} -fno-omit-frame-pointer -fno-sanitize-recover=all)
+  add_link_options(-fsanitize=${DAVIDIAN_SANITIZE})
+endif()
 
 # ---------------------------------------------------------------- DPF
 
@@ -98,6 +110,8 @@ if(DAVIDIAN_BUILD_TESTS)
   endif()
 endif()
 
+# One line per plugin, written by davidian_add_plugin(), read by the ci/ scripts.
+file(WRITE "${PROJECT_BINARY_DIR}/plugins.tsv" "")
 file(GLOB plugin_dirs LIST_DIRECTORIES true "${CMAKE_CURRENT_SOURCE_DIR}/plugins/*")
 foreach(dir IN LISTS plugin_dirs)
   if(EXISTS "${dir}/CMakeLists.txt")
