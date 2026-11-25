@@ -14,6 +14,10 @@
 #define DISTRHO_UI_URI         DISTRHO_PLUGIN_URI "#ui"
 #define DISTRHO_PLUGIN_CLAP_ID "com.davidian.example-gain"
 
+/* Maintainer e-mail for the LV2 metadata (DPF has no field for it; the build adds it).
+ * example.com is a reserved example domain: put a real address here before a release. */
+#define DAVIDIAN_PLUGIN_EMAIL  "plugins@example.com"
+
 /* Four-character codes: AU manufacturer and subtype, also part of the VST3 class ID. */
 #define DISTRHO_PLUGIN_BRAND_ID  Dvdn
 #define DISTRHO_PLUGIN_UNIQUE_ID DxGn

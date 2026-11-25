@@ -27,7 +27,8 @@
 # DPF always names LV2 audio ports "lv2_<symbol>". LV2_AUDIO_SYMBOLS rewrites them in the
 # generated .ttl after each build, so a plugin released with other audio symbols (for
 # example "in" / "out") keeps them. The binary addresses ports by index, so only the
-# metadata changes.
+# metadata changes. DPF also has no maintainer e-mail; #define DAVIDIAN_PLUGIN_EMAIL in
+# DistrhoPluginInfo.h adds it (lv2lint warns without one).
 #
 # Tests added for each plugin:
 #   formats_<name>     every format for this platform was built
@@ -100,12 +101,18 @@ function(davidian_add_plugin NAME)
   endif()
   file(APPEND "${PROJECT_BINARY_DIR}/plugins.tsv" "${NAME}\t${uri}\t${au_type}\t${unique}\t${brand}\n")
 
-  if("lv2" IN_LIST ARG_TARGETS AND ARG_LV2_AUDIO_SYMBOLS)
-    # Runs after DPF's own POST_BUILD step that generates the .ttl files.
+  # LV2 metadata DPF can't express: released audio port symbols and the maintainer's
+  # e-mail (DAVIDIAN_PLUGIN_EMAIL in DistrhoPluginInfo.h). Runs after DPF's own
+  # POST_BUILD step that generates the .ttl files.
+  set(email "")
+  if(info MATCHES "#define[ \t]+DAVIDIAN_PLUGIN_EMAIL[ \t]+\"([^\"]+)\"")
+    set(email "${CMAKE_MATCH_1}")
+  endif()
+  if("lv2" IN_LIST ARG_TARGETS AND (ARG_LV2_AUDIO_SYMBOLS OR email))
     string(REPLACE ";" "," syms "${ARG_LV2_AUDIO_SYMBOLS}")
     add_custom_command(TARGET ${NAME}-lv2 POST_BUILD
-      COMMAND "${CMAKE_COMMAND}" -DTTL=${bin}/${NAME}.lv2/${NAME}_dsp.ttl -DSYMBOLS=${syms}
-              -P "${DAVIDIAN_CMAKE_DIR}/lv2_audio_symbols.cmake"
+      COMMAND "${CMAKE_COMMAND}" -DTTL=${bin}/${NAME}.lv2/${NAME}_dsp.ttl "-DSYMBOLS=${syms}"
+              "-DEMAIL=${email}" -P "${DAVIDIAN_CMAKE_DIR}/lv2_metadata.cmake"
       VERBATIM)
   endif()
 

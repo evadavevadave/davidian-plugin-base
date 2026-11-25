@@ -32,7 +32,7 @@ davidian-plugin-base/
   cmake/
     DavidianPlugin.cmake davidian_add_plugin(): one call builds every format
     check_*.cmake        per-plugin tests: formats built, released identity, static runtime
-    lv2_audio_symbols.cmake  keeps a released plugin's LV2 audio port symbols
+    lv2_metadata.cmake   LV2 metadata DPF lacks: released audio symbols, maintainer e-mail
   plugins/
     ExampleGain/         example stereo gain: copy this folder to start a plugin
   tests/               unit tests, panel render, C++ compile test, header rule, LV2 host
