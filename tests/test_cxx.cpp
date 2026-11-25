@@ -32,8 +32,8 @@ int main()
     const double y = cab_run(&cab, linnet_step(&n, os_down(&os, buf), 1)) * g.value;
     denormal_leave(&dg);
 
-    static const Widget w[] = { { W_KNOB, 0, 40, 40, 20, 0, 10, 5, "K", "K", "0", "10", {0}, 0, 0 } };
-    static const PanelSpec spec = { 120, 100, "CXX", 0, 0, 0, { 60, 10, 110, 30 }, 50, 0, 0, w, 1, 0, 0 };
+    static const Widget w[] = { { W_KNOB, 0, 40, 40, 20, 0, 10, 5, "K", "K", "0", "10", {0}, 0, 0, 0 } };
+    static const PanelSpec spec = { 120, 100, "CXX", 0, 0, 0, { 60, 10, 110, 30 }, 50, 0, 0, w, 1, 0, 0, 0 };
     Panel p;
     const int ok = panel_init(&p, &spec, 0, 0);
     if (ok)

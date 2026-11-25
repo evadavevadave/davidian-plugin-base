@@ -8,7 +8,7 @@
 
 static const dui::Widget WIDGETS[] = {
     { dui::W_KNOB, kParamGain, 210, 165, 42, kGainMin, kGainMax, kGainDefault, "GAIN", "OUTPUT GAIN",
-      "-60", "+12", {0}, 0, "%+.1f DB" },
+      "-60", "+12", {0}, 0, "%+.1f DB", 0 },
 };
 
 static const dui::PanelSection SECTIONS[] = {
@@ -19,7 +19,7 @@ static const dui::PanelSpec SPEC = {
     DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT,
     "GAIN", "EXAMPLE PLUGIN", "EXAMPLE GAIN", "DRAG - DOUBLE-CLICK RESETS",
     { 280, 14, 404, 56 }, 260,
-    SECTIONS, 1, WIDGETS, 1, nullptr, nullptr
+    SECTIONS, 1, WIDGETS, 1, nullptr, nullptr, nullptr
 };
 
 START_NAMESPACE_DISTRHO

@@ -20,17 +20,22 @@ davidian-plugin-base/
     smooth.h             parameter smoothing: control-block Glide, per-sample Smoother
     denormal.h           flush-to-zero guard (x86 FTZ/DAZ, ARM64 FZ), NaN/inf check
     filters.h            TPT one-pole, DF2T biquad, Audio EQ Cookbook and Butterworth designs
-    oversample.h         1x/2x/4x/8x/16x oversampler for nonlinear stages
+    oversample.h         1x/2x/4x/8x/16x oversampler for nonlinear stages (minimum-phase IIR)
+    fir_oversample.h     linear-phase FIR oversampler, fixed 32-sample latency
     triode.h             Koren triode gain stage (12AX7), shunt-feedback stage
     linnet.h             linear circuit solver: nodal analysis, trapezoidal capacitors
     cabinet.h            four loudness-matched speaker-cabinet voicings with crossfade
+    opamp_stage.h        non-inverting op-amp gain stage (741: gain-bandwidth, slew, swing)
+    diode_clipper.h      RC-coupled diode clipper, Newton-solved, with common diode models
     ui/                  house-style GUI (GUI thread only)
       style.h              palette and lettering sizes
       font.h               stroke font
       canvas.h             anti-aliased software renderer
-      panel.h              knobs, trims, switches, footswitches, selectors; layout as data
+      panel.h              knobs (linear or log), trims, switches, footswitches, selectors,
+                           radio lists, lamps; layout as data, optional readout formatter
       dpf_panel_ui.hpp     the DPF UI class that shows a panel in every format
   cmake/
+    DavidianSetup.cmake  platform, standard and sanitizer settings (also for plugin repos)
     DavidianPlugin.cmake davidian_add_plugin(): one call builds every format
     check_*.cmake        per-plugin tests: formats built, released identity, static runtime
     lv2_metadata.cmake   LV2 metadata DPF lacks: released audio symbols, maintainer e-mail
@@ -65,6 +70,25 @@ ctest --test-dir build --output-on-failure
 | `cxx` | every shared header compiles and runs as C++ |
 | `dsp_headers_format_free` | no file in `common/` includes a plugin-format, GUI or OS header, and DSP never includes `common/ui/` |
 | per plugin | see "Tests per plugin" below |
+
+## Using the base from a plugin repository
+
+Each plugin keeps its own repository and adds this one as a pinned submodule at `base/`
+(with `git submodule update --init --recursive`, which also fetches DPF):
+
+```cmake
+cmake_minimum_required(VERSION 3.17)
+include(base/cmake/DavidianSetup.cmake)   # before project(): macOS universal, MSVC runtime
+project(my_plugin VERSION 1.0.0 LANGUAGES C CXX)
+davidian_setup()                          # after project(): standards, static runtime, sanitizers
+enable_testing()
+add_subdirectory(base)                    # DPF (patched), common/, davidian_add_plugin(), test tools
+add_subdirectory(plugin)                  # davidian_add_plugin(...)
+```
+
+As a submodule the base builds neither Example Gain nor its own unit tests
+(`DAVIDIAN_BASE_EXAMPLES`); every per-plugin test below still runs. The `ci/` scripts run
+from the plugin repository's root as `base/ci/...`.
 
 ## Measurement harness
 

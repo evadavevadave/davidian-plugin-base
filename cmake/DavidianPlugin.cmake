@@ -101,7 +101,7 @@ function(davidian_add_plugin NAME)
   if(info MATCHES "#define[ \t]+DISTRHO_PLUGIN_IS_SYNTH[ \t]+1")
     set(au_type aumu)
   endif()
-  file(APPEND "${PROJECT_BINARY_DIR}/plugins.tsv" "${NAME}\t${uri}\t${au_type}\t${unique}\t${brand}\n")
+  file(APPEND "${CMAKE_BINARY_DIR}/plugins.tsv" "${NAME}\t${uri}\t${au_type}\t${unique}\t${brand}\n")
 
   # LV2 metadata DPF can't express: released audio port symbols and the maintainer's
   # e-mail (DAVIDIAN_PLUGIN_EMAIL in DistrhoPluginInfo.h). Runs after DPF's own

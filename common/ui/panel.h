@@ -2,7 +2,8 @@
  * Copyright (C) 2026 Davidian */
 /* House-style control panel: drawing, hit-testing and mouse handling for knobs, trims,
  * toggle switches, footswitches and stepped selectors, independent of any windowing
- * system or plugin format.
+ * system or plugin format. Also a radio-button list (W_LIST) and an indicator lamp driven
+ * by an output parameter (W_LAMP), both from Davidian Canary Plus.
  *
  * A plugin describes its panel as data (a PanelSpec: size, name, sections, widgets) and
  * the panel draws into a 0x00RRGGBB pixel buffer. The plugin's UI wrapper shows that
@@ -30,10 +31,14 @@
 #include "font.h"
 #include "style.h"
 
-/* W_SELECT: a stepped rotary selector whose pointer aims at the chosen name in a list. */
-enum { W_KNOB, W_TRIM, W_SWITCH, W_FOOT, W_SELECT };
+/* W_SELECT: a stepped rotary selector whose pointer aims at the chosen name in a list.
+ * W_LIST:   radio-button rows; x, y = centre of the first row, r = half the row width.
+ *           Each option is "LABEL" or "LABEL|TAG" (TAG is drawn dim at the right end).
+ * W_LAMP:   indicator lamp lit 0..1 by a (usually output) parameter; not clickable. */
+enum { W_KNOB, W_TRIM, W_SWITCH, W_FOOT, W_SELECT, W_LIST, W_LAMP };
 
-#define MAX_OPTS          4
+#define MAX_OPTS          8
+#define LIST_ROW          34.0f /* W_LIST row spacing */
 #define PANEL_MAX_PARAMS  64
 #define SEL_LIST_DX       32.0f /* list starts this far right of the selector's centre */
 #define SEL_ROW           20.0f /* list row spacing */
@@ -51,6 +56,7 @@ typedef struct {
     const char* opts[MAX_OPTS]; /* position names (switches, footswitch, selector) */
     int nopts;
     const char* fmt;    /* printf format for the readout value; NULL = "%.1f" */
+    int log;            /* knobs and trims: logarithmic between min and max (both > 0) */
 } Widget;
 
 typedef struct {
@@ -80,6 +86,8 @@ typedef struct {
      * parts (after widgets), for anything the standard widgets don't cover. */
     void (*draw_bg_extra)(Canvas* c, const Panel* p);
     void (*draw_fg_extra)(Canvas* c, const Panel* p);
+    /* Optional: readout text for a widget; return 0 to fall back to the default. */
+    int (*format)(const Panel* p, const Widget* w, char* buf, size_t n);
 } PanelSpec;
 
 typedef void (*PanelWrite)(void* host, int param, float value);
@@ -102,14 +110,14 @@ struct Panel {
 
 static inline float w_norm(const Widget* w, float v)
 {
-    float n = (v - w->min) / (w->max - w->min);
+    float n = w->log ? logf(v / w->min) / logf(w->max / w->min) : (v - w->min) / (w->max - w->min);
     return n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
 }
 
 static inline float w_value(const Widget* w, float n)
 {
     n = n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
-    return w->min + n * (w->max - w->min);
+    return w->log ? w->min * powf(w->max / w->min, n) : w->min + n * (w->max - w->min);
 }
 
 static inline int w_index(const Panel* p, const Widget* w)
@@ -130,14 +138,27 @@ static inline float sel_angle(const Widget* w, int i)
     return atan2f(SEL_LIST_DX - 6.0f, -(sel_row_y(w, i) - w->y));
 }
 
+/* The label part of a "LABEL|TAG" option, into buf. */
+static inline void opt_label(const char* opt, char* buf, size_t n)
+{
+    size_t i = 0;
+    for (; opt[i] && opt[i] != '|' && i + 1 < n; ++i) buf[i] = opt[i];
+    buf[i] = 0;
+}
+
 static inline void w_format(const Panel* p, const Widget* w, char* buf, size_t n)
 {
     const float v = p->val[w->param];
+    if (p->spec->format && p->spec->format(p, w, buf, n))
+        return;
     switch (w->kind) {
     case W_SWITCH:
     case W_FOOT:
     case W_SELECT:
         snprintf(buf, n, "%s", w->opts[w_index(p, w)]);
+        break;
+    case W_LIST:
+        opt_label(w->opts[w_index(p, w)], buf, n);
         break;
     default:
         snprintf(buf, n, w->fmt ? w->fmt : "%.1f", v);
@@ -222,6 +243,31 @@ static inline void draw_select_static(Canvas* c, const Widget* w)
     text_center(c, w->x, w->y + w->r + 14.0f, w->label, 8, 2.0f, 1.4f, COL_INK, 1);
 }
 
+static inline void draw_list_static(Canvas* c, const Widget* w)
+{
+    const float x0 = w->x - w->r, x1 = w->x + w->r;
+    int i;
+    for (i = 0; i < w->nopts; ++i) {
+        const float y = w->y + LIST_ROW * i;
+        const char* tag = strchr(w->opts[i], '|');
+        if (i > 0)
+            cv_line(c, x0 + 8, y - 0.5f * LIST_ROW, x1 - 8, y - 0.5f * LIST_ROW, 1, COL_LINE, 0.35f);
+        /* Indicator bezel */
+        cv_circle(c, x0 + 16, y, 6.5f, 0x0e0e10, 1);
+        cv_ring(c, x0 + 16, y, 6.5f, 1.3f, 0x8a8e96, 0.7f);
+        if (tag)
+            text_draw(c, x1 - 6 - text_width(tag + 1, 7, 1.4f), y - 3.5f, tag + 1, 7, 1.4f, 1.1f, COL_DIM, 1);
+    }
+}
+
+static inline void draw_lamp_static(Canvas* c, const Widget* w)
+{
+    cv_circle(c, w->x + 1, w->y + 2, w->r, 0x000000, 0.5f);
+    cv_shaded_circle(c, w->x, w->y, w->r, 0xb9bcc3, 0x45484e, -0.4f, -0.6f, 1);
+    cv_circle(c, w->x, w->y, w->r - 4, 0x140c04, 1);
+    text_center(c, w->x, w->y + w->r + 9, w->label, 8, 2.0f, 1.4f, COL_INK, 1);
+}
+
 static inline void draw_background(Panel* p)
 {
     const PanelSpec* s = p->spec;
@@ -269,6 +315,8 @@ static inline void draw_background(Panel* p)
         case W_SWITCH: draw_switch_static(&c, w); break;
         case W_FOOT: draw_foot_static(&c, w); break;
         case W_SELECT: draw_select_static(&c, w); break;
+        case W_LIST: draw_list_static(&c, w); break;
+        case W_LAMP: draw_lamp_static(&c, w); break;
         }
     }
 
@@ -361,6 +409,36 @@ static inline void draw_foot(Canvas* c, const Widget* w, int on)
     }
 }
 
+static inline void draw_list(Canvas* c, const Widget* w, int idx)
+{
+    const float x0 = w->x - w->r;
+    char label[64];
+    int i;
+    for (i = 0; i < w->nopts; ++i) {
+        const float y = w->y + LIST_ROW * i;
+        const int on = i == idx;
+        if (on) {
+            cv_glow(c, x0 + 16, y, 3, 12, COL_AMBER, 0.35f);
+            cv_shaded_circle(c, x0 + 16, y, 4.5f, 0xfff0d0, COL_AMBER, -0.3f, -0.4f, 1);
+        } else {
+            cv_circle(c, x0 + 16, y, 4.5f, 0x2a1a08, 1);
+        }
+        opt_label(w->opts[i], label, sizeof label);
+        text_draw(c, x0 + 32, y - 4, label, 8, 1.8f, 1.35f, on ? COL_AMBER : COL_INK, on ? 1.0f : 0.75f);
+    }
+}
+
+static inline void draw_lamp(Canvas* c, const Widget* w, float b)
+{
+    const float r = w->r - 4;
+    b = b < 0.0f ? 0.0f : (b > 1.0f ? 1.0f : b);
+    cv_circle(c, w->x, w->y, r, mix(0x1e1206, COL_AMBER, b), 1);
+    if (b > 0.02f) {
+        cv_glow(c, w->x, w->y, 5, 22, COL_AMBER, 0.45f * b);
+        cv_circle(c, w->x - 2.5f, w->y - 2.5f, 2.6f, 0xfff2d6, 0.8f * b);
+    }
+}
+
 static inline void draw_readout(Panel* p)
 {
     const PanelSpec* s = p->spec;
@@ -393,6 +471,8 @@ static inline void panel_draw(Panel* p)
         case W_SWITCH: draw_switch(&p->c, w, w_index(p, w)); break;
         case W_FOOT: draw_foot(&p->c, w, w_index(p, w)); break;
         case W_SELECT: draw_select(&p->c, w, w_index(p, w), p->drag == i); break;
+        case W_LIST: draw_list(&p->c, w, w_index(p, w)); break;
+        case W_LAMP: draw_lamp(&p->c, w, p->val[w->param]); break;
         }
     }
     if (s->draw_fg_extra)
@@ -457,7 +537,7 @@ static inline void panel_set(Panel* p, int param, float v)
 static inline void set_value(Panel* p, int wi, float v)
 {
     const Widget* w = &p->spec->widgets[wi];
-    if (w->kind == W_SWITCH || w->kind == W_FOOT || w->kind == W_SELECT)
+    if (w->kind == W_SWITCH || w->kind == W_FOOT || w->kind == W_SELECT || w->kind == W_LIST)
         v = floorf(v + 0.5f);
     if (v < w->min) v = w->min;
     if (v > w->max) v = w->max;
@@ -486,6 +566,10 @@ static inline int panel_hit(const Panel* p, float x, float y)
             break;
         case W_SWITCH:
             if (dx >= -14 && dx <= 62 && dy >= -30 && dy <= 30)
+                return i;
+            break;
+        case W_LIST:
+            if (fabsf(dx) <= w->r && dy >= -0.5f * LIST_ROW && dy <= (w->nopts - 0.5f) * LIST_ROW)
                 return i;
             break;
         case W_SELECT:
@@ -546,6 +630,11 @@ static inline void panel_mouse_down(Panel* p, float x, float y, int dbl)
     case W_FOOT:
         set_value(p, i, w_index(p, w) ? 0.0f : 1.0f);
         break;
+    case W_LIST: {
+        const int row = (int)floorf((y - w->y) / LIST_ROW + 0.5f);
+        set_value(p, i, (float)(row < 0 ? 0 : (row >= w->nopts ? w->nopts - 1 : row)));
+        break;
+    }
     case W_SELECT: {
         /* Click a name to pick it; on the knob, drag up/down to step. */
         const int row = sel_row_at(w, x, y);
@@ -603,10 +692,11 @@ static inline void panel_wheel(Panel* p, float x, float y, float steps, int fine
     if (i < 0)
         return;
     w = &p->spec->widgets[i];
-    if (w->kind == W_SWITCH || w->kind == W_SELECT) {
+    if (w->kind == W_SWITCH || w->kind == W_SELECT || w->kind == W_LIST) {
+        /* Wheel up moves up the list. */
         int n = w_index(p, w) - (steps > 0 ? 1 : -1);
         set_value(p, i, (float)(n < 0 ? 0 : (n >= w->nopts ? w->nopts - 1 : n)));
-    } else if (w->kind != W_FOOT) {
+    } else if (w->kind != W_FOOT && w->kind != W_LAMP) {
         set_value(p, i, w_value(w, w_norm(w, p->val[w->param]) + steps * (fine ? 0.004f : 0.025f)));
     }
 }

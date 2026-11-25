@@ -450,6 +450,135 @@ static void test_chain(void)
     }
 }
 
+/* ------------------------------------------------------- FIR oversampler */
+
+static void test_fir_oversample(void)
+{
+    for (int factor = 2; factor <= 8; factor *= 2) {
+        FirOversampler os;
+        const int ok = fir_os_init(&os, factor);
+        CHECK(ok, "fir_os_init(%d)", factor);
+        if (!ok) { fir_os_free(&os); continue; }
+        /* Linear pass-through: an impulse comes out exactly FIR_OS_LATENCY samples later. */
+        int peak_at = -1;
+        double peak = 0.0;
+        for (int n = 0; n < 128; ++n) {
+            double out = 0.0;
+            fir_os_push_input(&os, n == 0 ? 1.0 : 0.0);
+            for (int ph = 0; ph < factor; ++ph) {
+                fir_os_push_output(&os, fir_os_interpolate(&os, ph));
+                if (ph == 0) out = fir_os_decimate(&os);
+            }
+            if (fabs(out) > peak) { peak = fabs(out); peak_at = n; }
+        }
+        CHECK(peak_at == FIR_OS_LATENCY, "%dx: impulse delayed by %d samples (expect %d)", factor, peak_at, FIR_OS_LATENCY);
+        /* Unity gain for a low sine once settled. */
+        fir_os_reset(&os);
+        double maxerr = 0.0;
+        for (int n = 0; n < 4800; ++n) {
+            const double x = sin(2 * M_PI * 1000.0 * n / 48000.0);
+            double out = 0.0;
+            fir_os_push_input(&os, x);
+            for (int ph = 0; ph < factor; ++ph) {
+                fir_os_push_output(&os, fir_os_interpolate(&os, ph));
+                if (ph == 0) out = fir_os_decimate(&os);
+            }
+            if (n > 200) {
+                const double want = sin(2 * M_PI * 1000.0 * (n - FIR_OS_LATENCY) / 48000.0);
+                maxerr = fmax(maxerr, fabs(out - want));
+            }
+        }
+        CHECK(maxerr < 1e-3, "%dx: 1 kHz passes delayed and unchanged, max error %g", factor, maxerr);
+        fir_os_free(&os);
+    }
+}
+
+/* -------------------------------------------------------- op-amp stage */
+
+static double opamp_gain_at(OpAmpStage* s, double f, double fs, double amp)
+{
+    double peak = 0.0;
+    s->z1 = s->z2 = s->lp_z = 0.0;
+    for (int n = 0; n < (int)fs; ++n) {
+        const double y = opamp_stage_process(s, amp * sin(2 * M_PI * f * n / fs));
+        if (n > (int)fs / 2) peak = fmax(peak, fabs(y));
+    }
+    return peak / amp;
+}
+
+static void test_opamp_stage(void)
+{
+    static OpAmpStage s;
+    const double fs = 384000.0; /* 8x 48 kHz, as Canary Plus runs it */
+    opamp_stage_init(&s, fs);
+    /* Pot fully in: gain 1 + 1M / (4.7k + 1M) = 1.995, about 6 dB. */
+    {
+        const double g = opamp_gain_at(&s, 1000.0, fs, 0.01);
+        CHECK(fabs(gain_to_db(g) - gain_to_db(1.0 + 1e6 / 1.0047e6)) < 0.1, "minimum gain %.2f dB (expect 6.0)", gain_to_db(g));
+    }
+    /* Pot fully out: 1 + 1M / 4.7k = 213.8 (46.6 dB) in the mid band, less where the
+     * gain-bandwidth corner (1 MHz / 213.8 = 4.7 kHz) takes over. */
+    opamp_stage_set_rg(&s, 4.7e3);
+    {
+        const double g1 = opamp_gain_at(&s, 2000.0, fs, 1e-4);
+        const double g2 = opamp_gain_at(&s, 20000.0, fs, 1e-4);
+        CHECK(gain_to_db(g1) > 40.0 && gain_to_db(g1) < 46.7, "maximum gain at 2 kHz %.1f dB", gain_to_db(g1));
+        CHECK(g2 < g1 / 3.0, "gain-bandwidth roll-off: 20 kHz %.1f dB vs 2 kHz %.1f dB", gain_to_db(g2), gain_to_db(g1));
+    }
+    /* Driven hard, the output stays inside the swing. */
+    {
+        double peak = 0.0;
+        int bad = 0;
+        for (int n = 0; n < 20000; ++n) {
+            const double y = opamp_stage_process(&s, 2.0 * sin(2 * M_PI * 440.0 * n / fs));
+            bad |= dsp_bad(y);
+            peak = fmax(peak, fabs(y));
+        }
+        CHECK(!bad && peak <= OPAMP_741.vsat + 1e-12 && peak > OPAMP_741.vknee, "swing limit: peak %.3f V (vsat %.1f)", peak, OPAMP_741.vsat);
+    }
+}
+
+/* ------------------------------------------------------- diode clipper */
+
+/* Positive and negative peaks of the clipper output for a 1 kHz sine. */
+static void clip_peaks(int diode, double amp, double* pos, double* neg, double* amount)
+{
+    static Clipper c;
+    const double fs = 384000.0;
+    clipper_init(&c, fs);
+    clipper_set_diode(&c, diode);
+    *pos = *neg = *amount = 0.0;
+    for (int n = 0; n < (int)fs / 2; ++n) {
+        const double v = clipper_process(&c, amp * sin(2 * M_PI * 1000.0 * n / fs));
+        if (n > (int)fs / 4) {
+            *pos = fmax(*pos, v);
+            *neg = fmax(*neg, -v);
+            *amount = fmax(*amount, clipper_clip_amount(&c));
+        }
+    }
+}
+
+static void test_diode_clipper(void)
+{
+    double pos, neg, amt;
+    /* Tiny signal: the diodes barely conduct, so it is the 10k / 10k divider (0.5). */
+    clip_peaks(DIODE_1N4148, 0.01, &pos, &neg, &amt);
+    CHECK(fabs(pos / 0.01 - 0.5) < 0.02, "small signal: divider gain %.3f (expect 0.5)", pos / 0.01);
+    CHECK(amt < 0.05, "small signal: clip amount %.3f", amt);
+    /* Driven hard: clipping level rises from germanium to silicon to LED. */
+    double ge, si, led;
+    clip_peaks(DIODE_1N34, 5.0, &ge, &neg, &amt);
+    CHECK(amt > 0.8, "1N34 driven hard: clip amount %.3f (near 1)", amt);
+    clip_peaks(DIODE_1N4148, 5.0, &si, &neg, &amt);
+    clip_peaks(DIODE_LED, 5.0, &led, &neg, &amt);
+    CHECK(ge > 0.15 && ge < 0.45, "1N34 clips at %.2f V", ge);
+    CHECK(si > 0.45 && si < 0.8, "1N4148 clips at %.2f V", si);
+    CHECK(led > 1.4 && led < 2.2, "LED clips at %.2f V", led);
+    /* The array has two diodes one way and one the other: asymmetric. */
+    clip_peaks(DIODE_1N34_ARRAY, 5.0, &pos, &neg, &amt);
+    CHECK(pos > 1.5 * neg, "1N34 array: +%.2f V / -%.2f V is asymmetric", pos, neg);
+}
+
 int main(void)
 {
     test_util();
@@ -460,6 +589,9 @@ int main(void)
     test_triode();
     test_linnet();
     test_cabinet();
+    test_fir_oversample();
+    test_opamp_stage();
+    test_diode_clipper();
     test_chain();
     return check_summary("test_dsp");
 }

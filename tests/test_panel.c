@@ -9,16 +9,20 @@
 #include "ui/panel.h"
 #include "check.h"
 
-enum { P_GAIN, P_TONE, P_LEVEL, P_MODE, P_BYPASS, P_TYPE, P_TRIM, P_COUNT };
+enum { P_GAIN, P_TONE, P_LEVEL, P_MODE, P_BYPASS, P_TYPE, P_TRIM, P_VOICE, P_METER, P_VOLTS, P_COUNT };
 
 static const Widget WIDGETS[] = {
-    { W_KNOB, P_GAIN, 81, 150, 30, 0, 10, 5, "GAIN", "GAIN", "0", "10", {0}, 0, 0 },
-    { W_KNOB, P_TONE, 211, 150, 30, 0, 10, 5, "TONE", "TONE", "0", "10", {0}, 0, 0 },
-    { W_KNOB, P_LEVEL, 341, 150, 30, 0, 10, 5, "LEVEL", "LEVEL", "0", "10", {0}, 0, 0 },
-    { W_SWITCH, P_MODE, 50, 376, 0, 0, 2, 1, "MODE", "MODE", 0, 0, { "CLEAN", "CRUNCH", "LEAD" }, 3, 0 },
-    { W_FOOT, P_BYPASS, 200, 386, 25, 0, 1, 1, "ACTIVE", "EFFECT", 0, 0, { "BYPASSED", "ON" }, 2, 0 },
-    { W_SELECT, P_TYPE, 284, 372, 19, 0, 3, 0, "TYPE", "TYPE", 0, 0, { "ONE", "TWO", "THREE", "FOUR" }, 4, 0 },
-    { W_TRIM, P_TRIM, 445, 372, 17, -24, 24, 0, "TRIM", "OUTPUT TRIM", 0, 0, {0}, 0, "%+.1f DB" },
+    { W_KNOB, P_GAIN, 81, 150, 30, 0, 10, 5, "GAIN", "GAIN", "0", "10", {0}, 0, 0, 0 },
+    { W_KNOB, P_TONE, 211, 150, 30, 0, 10, 5, "TONE", "TONE", "0", "10", {0}, 0, 0, 0 },
+    { W_KNOB, P_LEVEL, 341, 150, 30, 0, 10, 5, "LEVEL", "LEVEL", "0", "10", {0}, 0, 0, 0 },
+    { W_SWITCH, P_MODE, 50, 376, 0, 0, 2, 1, "MODE", "MODE", 0, 0, { "CLEAN", "CRUNCH", "LEAD" }, 3, 0, 0 },
+    { W_FOOT, P_BYPASS, 200, 386, 25, 0, 1, 1, "ACTIVE", "EFFECT", 0, 0, { "BYPASSED", "ON" }, 2, 0, 0 },
+    { W_SELECT, P_TYPE, 284, 372, 19, 0, 3, 0, "TYPE", "TYPE", 0, 0, { "ONE", "TWO", "THREE", "FOUR" }, 4, 0, 0 },
+    { W_TRIM, P_TRIM, 445, 372, 17, -24, 24, 0, "TRIM", "OUTPUT TRIM", 0, 0, {0}, 0, "%+.1f DB", 0 },
+    { W_LIST, P_VOICE, 619, 106, 115, 0, 3, 1, "VOICE", "VOICE", 0, 0,
+      { "1N270 GERMANIUM|ORIGINAL", "1N4148 SILICON|BUZZ", "RED LED|CRUNCH", "PLAIN ROW" }, 4, 0, 0 },
+    { W_LAMP, P_METER, 560, 350, 13, 0, 1, 0, "CLIP", "CLIP", 0, 0, {0}, 0, 0, 0 },
+    { W_TRIM, P_VOLTS, 680, 372, 17, 0.1f, 10.0f, 1.0f, "INPUT V", "VOLTS AT 0 DBFS", 0, 0, {0}, 0, 0, 1 },
 };
 
 static const PanelSection SECTIONS[] = {
@@ -26,14 +30,24 @@ static const PanelSection SECTIONS[] = {
     { 16, 266, 136, 456, "VOICE" },
     { 146, 266, 400, 456, "SWITCHES" },
     { 410, 266, 484, 456, "OUT" },
+    { 494, 76, 744, 246, "LIST" },
+    { 494, 266, 744, 456, "LAMP AND LOG" },
 };
 
+/* Custom readout for the log trim; everything else uses the default. */
+static int format_volts(const Panel* p, const Widget* w, char* buf, size_t n)
+{
+    if (w->param != P_VOLTS) return 0;
+    snprintf(buf, n, "%.2f V", p->val[w->param]);
+    return 1;
+}
+
 static const PanelSpec SPEC = {
-    500, 470, "BASE", "HOUSE-STYLE PANEL TEST", "PLUGIN BASE PANEL", NULL,
-    { 260, 14, 484, 56 }, 240,
+    760, 470, "BASE", "HOUSE-STYLE PANEL TEST", "PLUGIN BASE PANEL", NULL,
+    { 496, 14, 744, 56 }, 470,
     SECTIONS, (int)(sizeof SECTIONS / sizeof SECTIONS[0]),
     WIDGETS, (int)(sizeof WIDGETS / sizeof WIDGETS[0]),
-    NULL, NULL
+    NULL, NULL, format_volts
 };
 
 static int write_bmp(const char* path, const uint32_t* px, int w, int h)
@@ -79,7 +93,7 @@ static int count_diff(const uint32_t* a, const uint32_t* b, int n)
 
 int main(int argc, char** argv)
 {
-    static uint32_t before[500 * 470];
+    static uint32_t before[760 * 470];
     const int npx = SPEC.w * SPEC.h;
     Panel p;
 
@@ -164,9 +178,45 @@ int main(int argc, char** argv)
         CHECK(strcmp(buf, "LEAD") == 0, "switch readout '%s'", buf);
     }
 
+
+    /* Radio list: click a row, wheel steps rows, readout drops the tag. */
+    {
+        char buf[64];
+        CHECK(panel_hit(&p, 619, 106 + 2 * LIST_ROW) == 7, "list row hit");
+        CHECK(panel_hit(&p, 619, 106 + 4 * LIST_ROW) == -1, "below the last row misses");
+        panel_mouse_down(&p, 560, 106 + 2 * LIST_ROW + 5, 0);
+        CHECK(p.val[P_VOICE] == 2.0f && p.drag == -1, "click selects row 2, got %g", p.val[P_VOICE]);
+        panel_wheel(&p, 619, 106, 1.0f, 0);
+        CHECK(p.val[P_VOICE] == 1.0f, "wheel up moves up the list");
+        w_format(&p, &WIDGETS[7], buf, sizeof buf);
+        CHECK(strcmp(buf, "1N4148 SILICON") == 0, "list readout '%s'", buf);
+    }
+    /* Lamp: lit by its parameter, not clickable. */
+    {
+        panel_set(&p, P_METER, 0.0f);
+        panel_draw(&p);
+        const uint32_t dark = p.px[350 * SPEC.w + 560];
+        panel_set(&p, P_METER, 1.0f);
+        panel_draw(&p);
+        const uint32_t lit = p.px[350 * SPEC.w + 560];
+        CHECK(((lit >> 16) & 255) > ((dark >> 16) & 255) + 100, "lamp lights (%06x -> %06x)", dark, lit);
+        CHECK(panel_hit(&p, 560, 350) == -1, "lamp is not clickable");
+    }
+    /* Log trim: 1 V is the middle of 0.1-10 V; dragging 90 px up is half the range. */
+    {
+        char buf[64];
+        CHECK(fabsf(w_norm(&WIDGETS[9], 1.0f) - 0.5f) < 1e-6f, "log knob: 1 V at mid travel");
+        panel_mouse_down(&p, 680, 372, 0);
+        panel_mouse_move(&p, 680, 372 - 90, 0);
+        panel_mouse_up(&p);
+        CHECK(fabsf(p.val[P_VOLTS] - 10.0f) < 1e-3f, "log drag up half travel: 1 V -> 10 V, got %g", p.val[P_VOLTS]);
+        w_format(&p, &WIDGETS[9], buf, sizeof buf);
+        CHECK(strcmp(buf, "10.00 V") == 0, "custom formatter '%s'", buf);
+    }
+
     /* A spec with a parameter index the panel can't hold is refused. */
     {
-        static const Widget bad_w[] = { { W_KNOB, PANEL_MAX_PARAMS, 50, 50, 20, 0, 1, 0, "X", "X", 0, 0, {0}, 0, 0 } };
+        static const Widget bad_w[] = { { W_KNOB, PANEL_MAX_PARAMS, 50, 50, 20, 0, 1, 0, "X", "X", 0, 0, {0}, 0, 0, 0 } };
         PanelSpec bad = SPEC;
         Panel q;
         bad.widgets = bad_w;

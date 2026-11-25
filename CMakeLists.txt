@@ -13,41 +13,19 @@
 
 cmake_minimum_required(VERSION 3.17)
 
-if(APPLE)
-  set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal binary")
-  set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Oldest macOS supported")
-endif()
-# Static C/C++ runtime with MSVC, so hosts and the standalone need no redistributable.
-# (DPF's OpenGL UI builds with MinGW on Windows; the MINGW block below does the same there.)
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/DavidianSetup.cmake")
 
 project(davidian_plugin_base VERSION 0.1.0 LANGUAGES C CXX)
 
-set(CMAKE_C_STANDARD 99)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# MinGW (the Windows toolchain DPF's OpenGL UI supports): link the GCC runtime statically,
-# so plugins don't depend on libgcc / libstdc++ / libwinpthread DLLs.
-if(MINGW)
-  add_link_options(-static -static-libgcc -static-libstdc++)
+# Top level: this repository on its own (Example Gain and the base tests).
+# Otherwise: a submodule of a plugin repository, which has already called davidian_setup().
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  set(DAVIDIAN_BASE_TOP_LEVEL ON)
+else()
+  set(DAVIDIAN_BASE_TOP_LEVEL OFF)
 endif()
-
-option(DAVIDIAN_BUILD_TESTS "Build the tests in tests/" ON)
-option(DAVIDIAN_WERROR "Treat warnings in our own code as errors" OFF)
-# Sanitizer builds (see .github/workflows/build.yml):
-#   -DDAVIDIAN_SANITIZE=address,undefined   everything, including DPF and the plugins (GCC
-#                                           or Clang); the tests then run under ASan/UBSan
-#   -DDAVIDIAN_RTSAN=ON                     Clang 20+: the harness checks, with
-#                                           RealtimeSanitizer, that processing and parameter
-#                                           changes never allocate, lock or make system calls
-set(DAVIDIAN_SANITIZE "" CACHE STRING "Sanitizers for every target, e.g. address,undefined")
-option(DAVIDIAN_RTSAN "Build the harness with RealtimeSanitizer (Clang 20+)" OFF)
-if(DAVIDIAN_SANITIZE)
-  add_compile_options(-fsanitize=${DAVIDIAN_SANITIZE} -fno-omit-frame-pointer -fno-sanitize-recover=all)
-  add_link_options(-fsanitize=${DAVIDIAN_SANITIZE})
-endif()
+option(DAVIDIAN_BASE_EXAMPLES "Build plugins/ (Example Gain) and the base's own tests" ${DAVIDIAN_BASE_TOP_LEVEL})
+davidian_setup()
 
 # ---------------------------------------------------------------- DPF
 
@@ -154,17 +132,22 @@ if(DAVIDIAN_BUILD_TESTS)
   endif()
 endif()
 
-# One line per plugin, written by davidian_add_plugin(), read by the ci/ scripts.
-file(WRITE "${PROJECT_BINARY_DIR}/plugins.tsv" "")
-file(GLOB plugin_dirs LIST_DIRECTORIES true "${CMAKE_CURRENT_SOURCE_DIR}/plugins/*")
-foreach(dir IN LISTS plugin_dirs)
-  if(EXISTS "${dir}/CMakeLists.txt")
-    add_subdirectory("${dir}")
-  endif()
-endforeach()
+# One line per plugin, written by davidian_add_plugin(), read by the ci/ scripts. It lives
+# in the top-level build folder, also when this repository is a submodule.
+file(WRITE "${CMAKE_BINARY_DIR}/plugins.tsv" "")
 
 # ------------------------------------------------------------- tests
 
 if(DAVIDIAN_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
+
+if(DAVIDIAN_BASE_EXAMPLES)
+  file(GLOB plugin_dirs LIST_DIRECTORIES true "${CMAKE_CURRENT_SOURCE_DIR}/plugins/*")
+  foreach(dir IN LISTS plugin_dirs)
+    if(EXISTS "${dir}/CMakeLists.txt")
+      add_subdirectory("${dir}")
+    endif()
+  endforeach()
+endif()
+

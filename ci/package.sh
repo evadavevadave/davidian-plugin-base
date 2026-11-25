@@ -8,11 +8,13 @@
 #     LV2/<name>.lv2  VST3/<name>.vst3  CLAP/<name>.clap  AU/<name>.component (macOS)
 #     Standalone/<name>[.exe]  README.md  LICENSE  LICENSE-DPF
 #   ci/package.sh <version> <platform>      e.g. ci/package.sh v1.0.0 macos-universal
+# Run from the repository root (the base itself, or a plugin repository using it as base/).
 set -euo pipefail
 
 version="$1"
 platform="$2"
 bin="build/bin"
+base="$(cd "$(dirname "$0")/.." && pwd)"  # this script's repository: the base
 mkdir -p build/dist
 
 while IFS=$'\t' read -r name uri au_type au_sub au_manu; do
@@ -38,10 +40,14 @@ while IFS=$'\t' read -r name uri au_type au_sub au_manu; do
   fi
   # A plugin folder's own README wins over the repository README.
   readme="README.md"
-  dir=$(grep -l "davidian_add_plugin($name\b" plugins/*/CMakeLists.txt 2> /dev/null | head -n 1 || true)
-  if [ -n "$dir" ] && [ -f "$(dirname "$dir")/README.md" ]; then readme="$(dirname "$dir")/README.md"; fi
+  dir=$(grep -rl --include=CMakeLists.txt "davidian_add_plugin($name\b" . 2> /dev/null | grep -v '^\./build' | head -n 1 || true)
+  if [ -n "$dir" ] && [ -f "$(dirname "$dir")/README.md" ] && [ "$(dirname "$dir")" != "." ]; then
+    readme="$(dirname "$dir")/README.md"
+  fi
   cp "$readme" "$out/README.md"
-  cp LICENSE LICENSE-DPF "$out/"
+  cp LICENSE "$out/"
+  # In a plugin repository the DPF licence comes with the base submodule.
+  if [ -f LICENSE-DPF ]; then cp LICENSE-DPF "$out/"; else cp "$base/LICENSE-DPF" "$out/"; fi
 
   (
     cd build/dist
