@@ -229,7 +229,7 @@ struct TimedEvent {
 #  pragma clang diagnostic ignored "-Wfunction-effects"
 #endif
 static void rt_process(Dut* d, const ParamEvent* ev, uint32_t nev, const float** in, float** out,
-                       uint32_t frames) RT_NONBLOCKING
+                       uint32_t frames) noexcept RT_NONBLOCKING
 {
     for (uint32_t i = 0; i < nev; ++i) d->set_param(ev[i].index, ev[i].value);
     d->run(in, out, frames);

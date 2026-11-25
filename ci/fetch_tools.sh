@@ -23,7 +23,7 @@ asset_url() {
   if [ -n "${GITHUB_TOKEN:-}" ]; then auth=(-H "Authorization: Bearer $GITHUB_TOKEN"); fi
   curl -fsSL "${auth[@]}" "https://api.github.com/repos/$1/releases/tags/$2" \
     | grep -o '"browser_download_url": *"[^"]*"' | sed 's/.*: *"//; s/"$//' \
-    | grep -E "$3" | head -n 1
+    | grep -E -e "$3" | head -n 1
 }
 
 unpack() { # zip -> dir
