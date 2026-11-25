@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Davidian
+# Builds the shared code and runs the tests on Windows, macOS (universal) and Linux
+# x64 / arm64, following Brownstone 100's workflow. Plugin validation (pluginval, auval,
+# lv2lint, clap-validator), sanitizers and release packaging are added in step 3 of
+# docs/ENVIRONMENT.md, once plugins exist.
+name: build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      # DPF's OpenGL code builds with MinGW-w64 on Windows, not with Visual Studio.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+      - name: Build (MinGW-w64)
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DDAVIDIAN_WERROR=ON
+          cmake --build build --parallel
+      - name: Test
+        shell: msys2 {0}
+        run: ctest --test-dir build --output-on-failure
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: panel-windows
+          path: build/panel.bmp
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Build (universal arm64 + x86_64)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDAVIDIAN_WERROR=ON
+          cmake --build build --parallel
+      - name: Check architectures
+        run: |
+          lipo -info build/tests/test_dsp
+          lipo build/tests/test_dsp -verify_arch arm64 x86_64
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.04 keeps the glibc requirement low (2.35) so the binaries run on older distros.
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libgl1-mesa-dev libdbus-1-dev \
+            libjack-jackd2-dev lv2-dev
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDAVIDIAN_WERROR=ON
+          cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - uses: actions/upload-artifact@v5
+        if: matrix.runner == 'ubuntu-22.04'
+        with:
+          name: panel-linux
+          path: build/panel.bmp

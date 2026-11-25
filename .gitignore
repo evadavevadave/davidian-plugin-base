@@ -1,0 +1,18 @@
+# CMake build trees
+/build/
+/build-*/
+
+# Compiler and linker by-products
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.pdb
+
+# Test renders
+*.wav
+*.bmp
