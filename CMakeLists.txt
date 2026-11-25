@@ -18,6 +18,7 @@ if(APPLE)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Oldest macOS supported")
 endif()
 # Static C/C++ runtime with MSVC, so hosts and the standalone need no redistributable.
+# (DPF's OpenGL UI builds with MinGW on Windows; the MINGW block below does the same there.)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 project(davidian_plugin_base VERSION 0.1.0 LANGUAGES C CXX)
@@ -81,8 +82,22 @@ endif()
 
 # ----------------------------------------------------------- plugins
 
-# Each plugins/<Name>/CMakeLists.txt calls dpf_add_plugin() and links davidian::dsp
-# (and davidian::ui in its UI). None exist yet; see docs/ENVIRONMENT.md, step 2.
+# Each plugins/<Name>/CMakeLists.txt makes one davidian_add_plugin() call, which builds
+# LV2, VST3, CLAP, the standalone app and (macOS) AU: see cmake/DavidianPlugin.cmake.
+include(cmake/DavidianPlugin.cmake)
+
+if(DAVIDIAN_BUILD_TESTS)
+  enable_testing()
+  # lilv (the LV2 host library) lets the tests load each built LV2 bundle like a DAW does.
+  find_package(PkgConfig QUIET)
+  if(PKG_CONFIG_FOUND)
+    pkg_check_modules(LILV IMPORTED_TARGET lilv-0)
+  endif()
+  if(NOT LILV_FOUND)
+    message(STATUS "lilv not found: LV2 load tests are skipped")
+  endif()
+endif()
+
 file(GLOB plugin_dirs LIST_DIRECTORIES true "${CMAKE_CURRENT_SOURCE_DIR}/plugins/*")
 foreach(dir IN LISTS plugin_dirs)
   if(EXISTS "${dir}/CMakeLists.txt")
@@ -93,6 +108,5 @@ endforeach()
 # ------------------------------------------------------------- tests
 
 if(DAVIDIAN_BUILD_TESTS)
-  enable_testing()
   add_subdirectory(tests)
 endif()

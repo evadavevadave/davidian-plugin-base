@@ -7,7 +7,8 @@
 # DSP headers (common/*.h, common/*.c*) may include only standard C/C++ headers, the
 # x86 intrinsics header used for flush-to-zero, and each other. They must not include
 # anything from common/ui/, DPF, LV2, VST3, CLAP, AU or a windowing / graphics system.
-# common/ui/ may include DSP-free standard headers and other common/ui/ headers only.
+# common/ui/*.h may include standard headers and other common/ui/ headers only.
+# common/ui/dpf_panel_ui.hpp is the DPF binding and is deliberately not checked.
 
 if(NOT COMMON_DIR)
   message(FATAL_ERROR "pass -DCOMMON_DIR=...")

@@ -13,8 +13,13 @@
 - common/*.h is header-only C99 that must also compile warning-free as C++ (tests/test_cxx.cpp).
   It may include only standard headers, <xmmintrin.h> and its own siblings; never common/ui/,
   DPF, LV2, VST3, CLAP, AU, OpenGL or OS headers. tests/check_headers.cmake enforces this.
-- common/ui/ is GUI-thread code (house-style panel). Plugin UI files include it as "ui/panel.h";
-  DSP files never do.
+- common/ui/ is GUI-thread code (house-style panel). Plugin UI files include
+  "ui/dpf_panel_ui.hpp" (the only shared file that includes DPF); DSP files never include ui/.
+- Plugins: one folder in plugins/ with one davidian_add_plugin() call (cmake/DavidianPlugin.cmake);
+  start from plugins/ExampleGain. Every format comes from DPF, including LV2: no separate
+  LV2 C entry points or hand-written .ttl.
+- A released plugin has compat.txt (URI, UI URI, CLAP ID, AU/VST3 IDs, LV2 port indices and
+  symbols). Never edit it; parameters may only be appended. compat_<name> must pass.
 - Functions that build tables or design filters (triode_build, cab_init, os_init, linnet_prepare)
   run at instantiate / sample-rate change, or once per control block while a control moves,
   never per sample. Per-sample functions (*_run, *_step, os_up/os_down) are real-time safe.

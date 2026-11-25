@@ -28,8 +28,14 @@ davidian-plugin-base/
       font.h               stroke font
       canvas.h             anti-aliased software renderer
       panel.h              knobs, trims, switches, footswitches, selectors; layout as data
-  plugins/             one folder per plugin (none yet)
-  tests/               unit tests, panel render, C++ compile test, header rule (CTest)
+      dpf_panel_ui.hpp     the DPF UI class that shows a panel in every format
+  cmake/
+    DavidianPlugin.cmake davidian_add_plugin(): one call builds every format
+    check_*.cmake        per-plugin tests: formats built, released identity, static runtime
+    lv2_audio_symbols.cmake  keeps a released plugin's LV2 audio port symbols
+  plugins/
+    ExampleGain/         example stereo gain: copy this folder to start a plugin
+  tests/               unit tests, panel render, C++ compile test, header rule, LV2 host
   docs/ENVIRONMENT.md  the Universal Plugin Environment design
   CLAUDE.md            rules for Claude Code
   .github/workflows/   CI: Windows, macOS (universal), Linux x64 and arm64
@@ -55,20 +61,59 @@ ctest --test-dir build --output-on-failure
 | `panel` | renders every widget kind to `build/panel.bmp`, and checks redraw regions, value handling, mouse drag, fine drag, double-click reset, switches, selector and wheel |
 | `cxx` | every shared header compiles and runs as C++ |
 | `dsp_headers_format_free` | no file in `common/` includes a plugin-format, GUI or OS header, and DSP never includes `common/ui/` |
+| per plugin | see "Tests per plugin" below |
 
-## Using it from a plugin
+## Plugins: one build, every format
+
+Each plugin is a folder under `plugins/` with one call in its `CMakeLists.txt`:
 
 ```cmake
-dpf_add_plugin(MyAmp
-  TARGETS lv2 vst3 clap jack
-  FILES_DSP MyAmpPlugin.cpp
-  FILES_UI  MyAmpUI.cpp)
-target_link_libraries(MyAmp PUBLIC davidian::dsp davidian::ui)
+davidian_add_plugin(examplegain
+  FILES_DSP ExampleGainPlugin.cpp
+  FILES_UI  ExampleGainUI.cpp)
 ```
 
+That single `dpf_add_plugin` call (inside `cmake/DavidianPlugin.cmake`) builds, into `build/bin/`:
+
+| Format | Output | Where |
+| --- | --- | --- |
+| LV2 | `examplegain.lv2/` (DPF's own LV2 wrapper and generated .ttl) | all |
+| VST3 | `examplegain.vst3/` | all |
+| CLAP | `examplegain.clap` | all |
+| Standalone | `examplegain` / `examplegain.exe`: JACK when running, else CoreAudio, WASAPI, ALSA or PulseAudio | all |
+| Audio Unit | `examplegain.component/` | macOS |
+
+On Windows the compiler runtime is linked statically (MinGW `-static`, MSVC `/MT`), so
+the standalone and the plugins need no installer or redistributable; a test checks the
+DLL imports of every binary.
+
+### Keeping existing sessions working
+
+Hosts find a plugin and its controls by identity, so a ported plugin keeps its released one:
+
+- `DistrhoPluginInfo.h`: `DISTRHO_PLUGIN_URI` (the old LV2 URI), `DISTRHO_UI_URI`,
+  `DISTRHO_PLUGIN_CLAP_ID`, and `DISTRHO_PLUGIN_BRAND_ID` / `DISTRHO_PLUGIN_UNIQUE_ID`
+  (the AU manufacturer and subtype codes, which also make the VST3 class ID).
+- LV2 control ports are the audio ports followed by the parameters in order, with the
+  parameter symbols: keep the old order and symbols.
+- DPF names LV2 audio ports `lv2_<symbol>`; `LV2_AUDIO_SYMBOLS in out` restores released
+  audio symbols in the generated metadata.
+- `compat.txt` in the plugin folder records all of the above; the `compat_<name>` test fails
+  if any of it changes.
+
+### Tests per plugin
+
+`formats_<name>` (every format built), `compat_<name>` (released identity unchanged),
+`static_runtime_<name>` (Windows), and with lilv installed `lv2_<name>_44100` /
+`lv2_<name>_192000` (the bundle loads in an LV2 host and produces clean audio).
+`davidian_add_lv2_test()` adds runs with chosen control values, as the example does to
+prove its gain.
+
+### Code
+
 ```c
-#include "davidian_dsp.h"   /* DSP */
-#include "ui/panel.h"       /* UI file only */
+#include "davidian_dsp.h"         /* DSP */
+#include "ui/dpf_panel_ui.hpp"    /* UI file only: DavidianPanelUI + the panel (namespace dui) */
 ```
 
 ## Licence

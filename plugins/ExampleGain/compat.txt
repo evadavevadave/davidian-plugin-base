@@ -1,0 +1,12 @@
+# Released identity of Example Gain. Never edit after a release: hosts and saved
+# sessions find the plugin and its controls by these. Checked by the compat_examplegain test.
+uri        urn:davidian:example-gain
+ui_uri     urn:davidian:example-gain#ui
+clap_id    com.davidian.example-gain
+brand_id   Dvdn
+unique_id  DxGn
+port 0 in_l
+port 1 in_r
+port 2 out_l
+port 3 out_r
+port 4 gain

@@ -16,3 +16,12 @@ add_test(NAME cxx COMMAND test_cxx)
 add_test(NAME dsp_headers_format_free
   COMMAND "${CMAKE_COMMAND}" -DCOMMON_DIR=${PROJECT_SOURCE_DIR}/common
           -P "${CMAKE_CURRENT_SOURCE_DIR}/check_headers.cmake")
+
+# Minimal LV2 host for the per-plugin LV2 load tests (see cmake/DavidianPlugin.cmake).
+if(LILV_FOUND)
+  add_executable(lv2_host lv2_host.c)
+  target_link_libraries(lv2_host PRIVATE PkgConfig::LILV davidian_warnings)
+  if(NOT MSVC)
+    target_link_libraries(lv2_host PRIVATE m)
+  endif()
+endif()

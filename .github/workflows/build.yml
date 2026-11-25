@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Davidian
-# Builds the shared code and runs the tests on Windows, macOS (universal) and Linux
-# x64 / arm64, following Brownstone 100's workflow. Plugin validation (pluginval, auval,
-# lv2lint, clap-validator), sanitizers and release packaging are added in step 3 of
-# docs/ENVIRONMENT.md, once plugins exist.
+# Builds every plugin in every format (LV2, VST3, CLAP, standalone; AU on macOS) and runs
+# the tests on Windows, macOS (universal) and Linux x64 / arm64, following Brownstone
+# 100's workflow. The tests include, per plugin: all formats built, released IDs and LV2
+# ports unchanged (compat.txt), the LV2 bundle running in a host (Linux), and on Windows
+# no dependency on runtime DLLs. Plugin validators (pluginval, auval, lv2lint,
+# clap-validator), sanitizers and release packaging are step 3 of docs/ENVIRONMENT.md.
 name: build
 
 on:
@@ -39,7 +41,13 @@ jobs:
           cmake --build build --parallel
       - name: Test
         shell: msys2 {0}
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          find build/bin -maxdepth 4 | sort
+          ctest --test-dir build --output-on-failure
+      - uses: actions/upload-artifact@v5
+        with:
+          name: plugins-windows-x64
+          path: build/bin/
       - uses: actions/upload-artifact@v5
         if: always()
         with:
@@ -58,10 +66,18 @@ jobs:
           cmake --build build --parallel
       - name: Check architectures
         run: |
-          lipo -info build/tests/test_dsp
-          lipo build/tests/test_dsp -verify_arch arm64 x86_64
+          find build/bin -maxdepth 4 | sort
+          for f in build/bin/*.vst3/Contents/MacOS/* build/bin/*.clap/Contents/MacOS/* \
+                   build/bin/*.component/Contents/MacOS/* build/bin/*.lv2/*.dylib; do
+            lipo -info "$f"
+            lipo "$f" -verify_arch arm64 x86_64
+          done
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - uses: actions/upload-artifact@v5
+        with:
+          name: plugins-macos-universal
+          path: build/bin/
 
   linux:
     strategy:
@@ -79,13 +95,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libgl1-mesa-dev libdbus-1-dev \
-            libjack-jackd2-dev lv2-dev
+            libjack-jackd2-dev libasound2-dev libpulse-dev lv2-dev liblilv-dev
       - name: Build
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDAVIDIAN_WERROR=ON
           cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - uses: actions/upload-artifact@v5
+        with:
+          name: plugins-${{ matrix.runner == 'ubuntu-22.04-arm' && 'linux-arm64' || 'linux-x64' }}
+          path: build/bin/
       - uses: actions/upload-artifact@v5
         if: matrix.runner == 'ubuntu-22.04'
         with:
