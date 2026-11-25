@@ -29,7 +29,8 @@
   for a control that is meant to switch instantly, and say why in the plugin's CMakeLists.txt.
 - Audio-thread code must pass the RealtimeSanitizer build (-DDAVIDIAN_RTSAN=ON, Clang 20+):
   no allocation, locks or system calls in run() or setParameterValue().
-- No -ffast-math (it removes NaN guards). Keep the DPF submodule pinned; bump it deliberately.
+- No -ffast-math (it removes NaN guards). Keep the DPF submodule pinned; bump it deliberately,
+  and then recheck "Known upstream warnings" in README.md. Don't patch DPF in this repo.
 - Every source file starts with the SPDX GPL-3.0-or-later header and "Copyright (C) 2026 Davidian".
 - Build and test: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j &&
   ctest --test-dir build --output-on-failure

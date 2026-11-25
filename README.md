@@ -113,6 +113,18 @@ pluginval's GUI tests run as a separate, non-blocking step, as in Brownstone. Ea
 `davidian-<name>-<version>-<platform>.zip`, holds `LV2/`, `VST3/`, `CLAP/`, `AU/` (macOS),
 `Standalone/`, the README and the licences.
 
+### Known upstream warnings
+
+These appear in passing CI runs. They come from DPF (pinned at 4238e1c7), not from plugin
+code, and are left as they are rather than carrying a private patch to DPF:
+
+| Where | Message | Why |
+| --- | --- | --- |
+| clap-validator | `state-invalid-random`: "The plugin loaded random bytes successfully, which is unexpected, but the plugin did not crash" | DPF's CLAP state loader skips data it doesn't recognise and still reports success; nothing is applied, so the plugin's state is unchanged. Not changed in DPF `develop` as of 2026-11. |
+| pluginval (VST3) | `DPF warning: asked to delete component while audio processor / connection point still active` | the host releases the VST3 component before the objects it handed out; DPF defers the cleanup to unload. pluginval passes. |
+
+Recheck both when bumping DPF.
+
 ## Plugins: one build, every format
 
 Each plugin is a folder under `plugins/` with one call in its `CMakeLists.txt`:
